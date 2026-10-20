@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "612015829097",
+    "project_id": "remedial-matrix",
+    "storage_bucket": "remedial-matrix.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:612015829097:android:c9bd7bc7839e3ad0d3b2f8",
+        "android_client_info": {
+          "package_name": "com.example.remedial_matrix"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBm6UEHXGE7NpcoNUq7BjE8wO7ItTVV8GU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
