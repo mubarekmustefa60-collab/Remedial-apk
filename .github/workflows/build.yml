@@ -36,13 +36,8 @@ jobs:
 
       - name: Fix Android Min SDK for Firebase
         run: |
-          # አዲሱን ፋይል ቅርጸት (Kotlin script) በማስተካከል ላይ...
-          sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/g' app_build/android/app/build.gradle.kts || true
-          
-          # የድሮው ፋይል ቅርጸት ካለም እንዲያስተካክለው...
-          if [ -f "app_build/android/app/build.gradle" ]; then
-            sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' app_build/android/app/build.gradle
-          fi
+          # የትኛውም አይነት አዲስም ሆነ አሮጌ ፋይል ቢሆን 'flutter.minSdkVersion' የሚለውን ፈልጎ በግድ '23' ያደርገዋል
+          find app_build/android/app -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) -exec sed -i 's/flutter.minSdkVersion/23/g' {} +
 
       - name: Add Internet Permission
         run: |
