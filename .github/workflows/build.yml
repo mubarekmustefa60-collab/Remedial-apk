@@ -34,10 +34,15 @@ jobs:
           mkdir -p app_build/assets
           cp assets/questions.json app_build/assets/questions.json || true
 
-      - name: Fix Android Min SDK for Firebase
+      - name: Fix Android SDK Versions
         run: |
-          # የትኛውም አይነት አዲስም ሆነ አሮጌ ፋይል ቢሆን 'flutter.minSdkVersion' የሚለውን ፈልጎ በግድ '23' ያደርገዋል
-          find app_build/android/app -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) -exec sed -i 's/flutter.minSdkVersion/23/g' {} +
+          # አዲሱን እና አሮጌውን የ Flutter አጻጻፍ ፈልጎ ያስተካክላል
+          find app_build/android/app -type f -exec sed -i 's/flutter.minSdkVersion/23/g' {} +
+          find app_build/android/app -type f -exec sed -i 's/flutter.minSdk/23/g' {} +
+          find app_build/android/app -type f -exec sed -i 's/flutter.targetSdkVersion/34/g' {} +
+          find app_build/android/app -type f -exec sed -i 's/flutter.targetSdk/34/g' {} +
+          find app_build/android/app -type f -exec sed -i 's/flutter.compileSdkVersion/34/g' {} +
+          find app_build/android/app -type f -exec sed -i 's/flutter.compileSdk/34/g' {} +
 
       - name: Add Internet Permission
         run: |
