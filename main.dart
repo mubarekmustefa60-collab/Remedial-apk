@@ -5,7 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const RemedialApp());
 }
@@ -45,6 +45,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
     checkRegistration();
   }
 
+  // 100% Offline Check - ምንም አይነት ሰርቨር አይጠብቅም
   Future<void> checkRegistration() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -59,7 +60,13 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => isLoading = false);
+      if (mounted) {
+        setState(() {
+          isRegistered = false;
+          appStatus = 'free';
+          isLoading = false;
+        });
+      }
     }
   }
 
@@ -80,9 +87,8 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController nameCtrl = TextEditingController();
   String selectedStream = 'Natural';
-  bool isSaving = false;
 
-  Future<void> registerUser() async {
+  void registerUser() {
     if (nameCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("እባክዎ ሙሉ ስምዎን ያስገቡ!"), backgroundColor: Colors.red),
@@ -90,30 +96,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
     
-    setState(() => isSaving = true);
-    
-    try {
-      // ዴታውን በቀጥታ ስልኩ ውስጥ ብቻ ሴቭ ማድረግ (ምንም ኢንተርኔት አያስፈልግም)
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('local_registered', true);
-      await prefs.setString('local_status', 'free');
-      await prefs.setString('local_name', nameCtrl.text.trim());
-      await prefs.setString('local_stream', selectedStream);
+    // መረጃውን ከበስተጀርባ (Background) ስልኩ ላይ ቋሚ አድርጎ ሴቭ ያደርጋል
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool('local_registered', true);
+      prefs.setString('local_status', 'free');
+      prefs.setString('local_name', nameCtrl.text.trim());
+      prefs.setString('local_stream', selectedStream);
+    });
 
-      // አጭር የ 0.5 ሰከንድ ማረፊያ (በተኑ መጫኑን ለማሳየት)
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      if (mounted) {
-        // የድሮውን ገጽ ሰባብሮ ወደ ዋናው ማለፍ
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const MainMenuScreen(initialStatus: 'free')),
-          (Route<dynamic> route) => false,
-        );
-      }
-    } catch (e) {
-      debugPrint("Error saving: $e");
-      if (mounted) setState(() => isSaving = false);
-    }
+    // ያለምንም መዘግየት በቅጽበት አሮጌውን ገጽ ሰባብሮ ወደ ዋናው ሜኑ ይወስዳል
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const MainMenuScreen(initialStatus: 'free')),
+      (route) => false,
+    );
   }
 
   @override
@@ -148,10 +143,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             const SizedBox(height: 30),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, padding: const EdgeInsets.symmetric(vertical: 16)),
-              onPressed: isSaving ? null : registerUser,
-              child: isSaving 
-                  ? const CircularProgressIndicator(color: Colors.white) 
-                  : const Text("Get Started 🚀", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+              onPressed: registerUser, // በቀጥታ ይሰራል
+              child: const Text("Get Started 🚀", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
             )
           ],
         ),
@@ -254,10 +247,12 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           ElevatedButton(
-            onPressed: () async {
+            onPressed: () {
               if (pwdCtrl.text == "Matrix@2026") {
-                SharedPreferences prefs = await SharedPreferences.getInstance();
-                await prefs.setString('local_status', 'vip');
+                // 100% Offline VIP Unlock
+                SharedPreferences.getInstance().then((prefs) {
+                  prefs.setString('local_status', 'vip');
+                });
                 setState(() => appStatus = 'vip');
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -419,21 +414,17 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 }
 
-class LeaderboardScreen extends StatefulWidget {
+class LeaderboardScreen extends StatelessWidget {
   const LeaderboardScreen({Key? key}) : super(key: key);
-  @override
-  _LeaderboardScreenState createState() => _LeaderboardScreenState();
-}
-
-class _LeaderboardScreenState extends State<LeaderboardScreen> {
-  List<dynamic> topUsers = [
-    {"name": "Mubarek Mustefa", "subject": "Physics", "score": 48, "method": "MODEL EXAMS (2018)"},
-    {"name": "Abebe Kebede", "subject": "Chemistry", "score": 45, "method": "REMEDIAL EXAMS (2017)"},
-    {"name": "Tigist Haile", "subject": "Biology", "score": 42, "method": "MODEL EXAMS (2017)"},
-  ];
 
   @override
   Widget build(BuildContext context) {
+    List<dynamic> topUsers = [
+      {"name": "Mubarek Mustefa", "subject": "Physics", "score": 48, "method": "MODEL EXAMS (2018)"},
+      {"name": "Abebe Kebede", "subject": "Chemistry", "score": 45, "method": "REMEDIAL EXAMS (2017)"},
+      {"name": "Tigist Haile", "subject": "Biology", "score": 42, "method": "MODEL EXAMS (2017)"},
+    ];
+
     return Scaffold(
       appBar: AppBar(title: const Text("🏆 Top 10 Students")),
       body: ListView.builder(
