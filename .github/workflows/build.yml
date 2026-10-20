@@ -14,7 +14,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
           java-version: '17'
@@ -24,13 +24,15 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Create Flutter Project (Auto Setup)
+      - name: Create Flutter Project
         run: flutter create app_build
 
-      - name: Copy User Files into Project
+      - name: Copy Files into Project
         run: |
           cp pubspec.yaml app_build/pubspec.yaml
           cp main.dart app_build/lib/main.dart
+          mkdir -p app_build/assets
+          cp assets/questions.json app_build/assets/questions.json
 
       - name: Add Internet Permission
         run: |
