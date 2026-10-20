@@ -8,8 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout code
@@ -26,21 +24,28 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Create Flutter Project (Auto Setup)
+        run: flutter create app_build
+
+      - name: Copy User Files into Project
+        run: |
+          cp pubspec.yaml app_build/pubspec.yaml
+          cp main.dart app_build/lib/main.dart
+
       - name: Add Internet Permission
         run: |
-          mkdir -p android/app/src/main
-          if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
-            echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET"/><application android:label="Remedial Matrix" android:name="${applicationName}" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"><activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:theme="@style/LaunchTheme" android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode" android:windowSoftInputMode="adjustResize"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application></manifest>' > android/app/src/main/AndroidManifest.xml
-          fi
+          sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml
 
       - name: Install dependencies
+        working-directory: ./app_build
         run: flutter pub get
 
       - name: Build APK
+        working-directory: ./app_build
         run: flutter build apk --release
 
       - name: Upload APK File
         uses: actions/upload-artifact@v4
         with:
           name: RemedialMatrix-App
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: app_build/build/app/outputs/flutter-apk/app-release.apk
