@@ -34,6 +34,12 @@ jobs:
           mkdir -p app_build/assets
           cp assets/questions.json app_build/assets/questions.json
 
+      - name: Fix Android Min SDK for Firebase
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' app_build/android/app/build.gradle
+          sed -i 's/minSdkVersion 16/minSdkVersion 23/g' app_build/android/app/build.gradle
+          sed -i 's/minSdkVersion 19/minSdkVersion 23/g' app_build/android/app/build.gradle
+
       - name: Add Internet Permission
         run: |
           sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml
