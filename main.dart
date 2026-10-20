@@ -1,12 +1,33 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
+import 'dart:math';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  try {
+    await Firebase.initializeApp(
+      options: const FirebaseOptions(
+        apiKey: "AIzaSyBm6UEHXGE7NpcoNUq7BjE8wO7ItTVV8GU",
+        appId: "1:612015829097:android:c9bd7bc7839e3ad0d3b2f8",
+        messagingSenderId: "612015829097",
+        projectId: "remedial-matrix",
+        storageBucket: "remedial-matrix.firebasestorage.app",
+      ),
+    );
+    FirebaseDatabase.instance.setPersistenceEnabled(true);
+  } catch (e) {
+    debugPrint("Firebase error: $e");
+  }
+
   runApp(const RemedialApp());
 }
 
@@ -45,12 +66,22 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
     checkRegistration();
   }
 
-  // 100% Offline Check - ምንም አይነት ሰርቨር አይጠብቅም
   Future<void> checkRegistration() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       bool localRegistered = prefs.getBool('local_registered') ?? false;
       String localStatus = prefs.getString('local_status') ?? 'free';
+      String deviceId = prefs.getString('device_id') ?? '';
+
+      if (localRegistered && deviceId.isNotEmpty) {
+        try {
+          final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get();
+          if (snapshot.exists) {
+            localStatus = snapshot.value.toString();
+            await prefs.setString('local_status', localStatus);
+          }
+        } catch (_) {}
+      }
 
       if (mounted) {
         setState(() {
@@ -60,13 +91,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          isRegistered = false;
-          appStatus = 'free';
-          isLoading = false;
-        });
-      }
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
@@ -87,28 +112,41 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController nameCtrl = TextEditingController();
   String selectedStream = 'Natural';
+  bool isSaving = false;
 
-  void registerUser() {
+  Future<void> registerUser() async {
     if (nameCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("እባክዎ ሙሉ ስምዎን ያስገቡ!"), backgroundColor: Colors.red),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("እባክዎ ሙሉ ስምዎን ያስገቡ!"), backgroundColor: Colors.red));
       return;
     }
-    
-    // መረጃውን ከበስተጀርባ (Background) ስልኩ ላይ ቋሚ አድርጎ ሴቭ ያደርጋል
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setBool('local_registered', true);
-      prefs.setString('local_status', 'free');
-      prefs.setString('local_name', nameCtrl.text.trim());
-      prefs.setString('local_stream', selectedStream);
-    });
+    setState(() => isSaving = true);
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      int shortId = Random().nextInt(9000) + 1000;
+      String deviceId = "DEV_${DateTime.now().millisecondsSinceEpoch}_$shortId";
 
-    // ያለምንም መዘግየት በቅጽበት አሮጌውን ገጽ ሰባብሮ ወደ ዋናው ሜኑ ይወስዳል
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const MainMenuScreen(initialStatus: 'free')),
-      (route) => false,
-    );
+      await prefs.setBool('local_registered', true);
+      await prefs.setString('local_status', 'free');
+      await prefs.setString('local_name', nameCtrl.text.trim());
+      await prefs.setString('local_stream', selectedStream);
+      await prefs.setInt('local_short_id', shortId);
+      await prefs.setString('device_id', deviceId);
+
+      DatabaseReference ref = FirebaseDatabase.instance.ref("students/$deviceId");
+      await ref.set({
+        "full_name": nameCtrl.text.trim(),
+        "stream": selectedStream,
+        "status": "free",
+        "short_id": shortId,
+        "registered_at": DateTime.now().toIso8601String(),
+      });
+
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const MainMenuScreen(initialStatus: 'free')), (route) => false);
+      }
+    } catch (e) {
+      if (mounted) setState(() => isSaving = false);
+    }
   }
 
   @override
@@ -123,15 +161,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           children: [
             const Text("እንኳን ደህና መጡ! 🌟\nእባክዎ ለመጀመር መረጃዎትን ይሙሉ", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
             const SizedBox(height: 30),
-            TextField(
-              controller: nameCtrl, 
-              style: const TextStyle(color: Colors.white), 
-              decoration: const InputDecoration(
-                labelText: "ሙሉ ስም (Full Name)", 
-                border: OutlineInputBorder(), 
-                prefixIcon: Icon(Icons.person)
-              ),
-            ),
+            TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: "ሙሉ ስም (Full Name)", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person))),
             const SizedBox(height: 20),
             const Text("የጥናት መስመር (Stream):", style: TextStyle(fontSize: 16, color: Colors.white70)),
             Row(
@@ -143,8 +173,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             const SizedBox(height: 30),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, padding: const EdgeInsets.symmetric(vertical: 16)),
-              onPressed: registerUser, // በቀጥታ ይሰራል
-              child: const Text("Get Started 🚀", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+              onPressed: isSaving ? null : registerUser,
+              child: isSaving ? const CircularProgressIndicator(color: Colors.white) : const Text("Get Started 🚀", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
             )
           ],
         ),
@@ -162,20 +192,73 @@ class MainMenuScreen extends StatefulWidget {
 
 class _MainMenuScreenState extends State<MainMenuScreen> {
   late String appStatus;
+  int userShortId = 0;
 
   @override
   void initState() {
     super.initState();
     appStatus = widget.initialStatus;
+    _loadUserData();
+    _checkBroadcast(); // አፑ ሲከፈት ማስታወቂያ ካለ ያረጋግጣል
+  }
+
+  Future<void> _loadUserData() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    int? id = prefs.getInt('local_short_id');
+    if (id == null) {
+      id = Random().nextInt(9000) + 1000;
+      await prefs.setInt('local_short_id', id);
+    }
+    setState(() { userShortId = id!; });
+  }
+
+  Future<void> _checkBroadcast() async {
+    try {
+      final snapshot = await FirebaseDatabase.instance.ref("announcement").get();
+      if (snapshot.exists) {
+        Map<dynamic, dynamic> data = snapshot.value as Map<dynamic, dynamic>;
+        SharedPreferences prefs = await SharedPreferences.getInstance();
+        int lastTime = prefs.getInt('last_broadcast_time') ?? 0;
+        int newTime = data['time'] ?? 0;
+
+        if (newTime > lastTime) {
+          if (mounted) {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                backgroundColor: const Color(0xFF2C2C2C),
+                title: Text(data['title'] ?? "📢 ማስታወቂያ", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+                content: Text(data['message'] ?? "", style: const TextStyle(color: Colors.white, fontSize: 16)),
+                actions: [
+                  TextButton(
+                    onPressed: () async {
+                      await prefs.setInt('last_broadcast_time', newTime);
+                      if (context.mounted) Navigator.pop(context);
+                    },
+                    child: const Text("አንብቤያለሁ (Close)"),
+                  )
+                ],
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {}
   }
 
   Future<void> refreshStatus() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    String st = prefs.getString('local_status') ?? 'free';
-    setState(() => appStatus = st);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("✅ ስቴተስ: ${st.toUpperCase()}"), backgroundColor: Colors.green),
-    );
+    String deviceId = prefs.getString('device_id') ?? '';
+    try {
+      final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get();
+      if (snapshot.exists) {
+        String newStatus = snapshot.value.toString();
+        await prefs.setString('local_status', newStatus);
+        setState(() => appStatus = newStatus);
+      }
+    } catch (e) {}
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("✅ ስቴተስ: ${appStatus.toUpperCase()}"), backgroundColor: Colors.green));
+    _checkBroadcast();
   }
 
   Future<void> _launchTutorial() async {
@@ -189,82 +272,136 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 
   void _showPremiumDialog(BuildContext context) {
+    bool isDialogLoading = false;
+    File? selectedImage;
+    final ImagePicker picker = ImagePicker();
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2C2C2C),
-        title: Row(
-          children: const [
-            Icon(Icons.lock, color: Colors.amber),
-            SizedBox(width: 10),
-            Text("Premium Access", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("💎 Premium ሲመዘገቡ የሚያገኙዋቸው ጥቅሞች፦", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14)),
-              const SizedBox(height: 5),
-              const Text("• አፕሊኬሽኑ ሙሉ በሙሉ (Unlocked) ይከፈትልዎታል።\n• ወደ ፕራይቬት ቱቶሪያል ክላስ (Private Tutorial Class) በቀጥታ ይገባሉ።", style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const Divider(color: Colors.white24, height: 20),
-              const Text("📋 ለመመዝገብ የሚከተሉትን ያድርጉ፦", style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 5),
-              const Text("1️⃣ በታች ባሉት አካውንቶች 300 ብር ይክፈሉ።\n🏦 CBE: 1000667301673\n📱 TELEBIRR: 0929698365\n👤 ስም: Mubarek Mustefa", style: TextStyle(color: Colors.amber, fontSize: 12)),
-              const SizedBox(height: 10),
-              const Text("2️⃣ የከፈሉበትን ደረሰኝ (Screenshot) ይዘው አድሚንን በቴሌግራም ያነጋግሩ።", style: TextStyle(color: Colors.white70, fontSize: 12)),
+      barrierDismissible: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF2C2C2C),
+            title: Row(children: const [Icon(Icons.lock, color: Colors.amber), SizedBox(width: 10), Text("Premium Access", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))]),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (appStatus == 'pending') ...[
+                    const Center(child: Icon(Icons.hourglass_top, color: Colors.blueAccent, size: 50)),
+                    const SizedBox(height: 15),
+                    const Text("⏳ ክፍያዎ እየታየ ነው! እባክዎ አድሚን እስኪያረጋግጥልዎት ድረስ በትዕግስት ይጠብቁ። ማረጋገጥ ከፈለጉ ከላይ Refresh የሚለውን ይጫኑ።", style: TextStyle(color: Colors.white, fontSize: 16), textAlign: TextAlign.center),
+                  ] 
+                  else ...[
+                    if (appStatus == 'rejected')
+                      const Padding(padding: EdgeInsets.only(bottom: 10), child: Text("❌ የላኩት ደረሰኝ ልክ ስላልሆነ አልፀደቀም፤ እባክዎ እንደገና ይሞክሩ።", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold))),
+                    const Text("💎 Premium ሲመዘገቡ የሚያገኙዋቸው ጥቅሞች፦", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14)),
+                    const SizedBox(height: 5),
+                    const Text("• አፕሊኬሽኑ ሙሉ በሙሉ ይከፈትልዎታል።\n• ወደ ፕራይቬት ቱቶሪያል ክላስ በቀጥታ ይገባሉ።", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    const Divider(color: Colors.white24, height: 20),
+                    const Text("1️⃣ በታች ባሉት አካውንቶች 300 ብር ይክፈሉ።\n🏦 CBE: 1000667301673\n📱 TELEBIRR: 0929698365\n👤 ስም: Mubarek Mustefa", style: TextStyle(color: Colors.amber, fontSize: 12)),
+                    const SizedBox(height: 10),
+                    const Text("2️⃣ የከፈሉበትን ደረሰኝ (Screenshot) ከታች ባለው በተን ይምረጡና ይላኩ።", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    const SizedBox(height: 15),
+                    Center(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade700),
+                        onPressed: () async {
+                          final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 30);
+                          if (image != null) { setStateDialog(() { selectedImage = File(image.path); }); }
+                        },
+                        icon: const Icon(Icons.image, color: Colors.white),
+                        label: Text(selectedImage == null ? "ደረሰኝ ምረጥ (Attach)" : "✅ ፎቶ ተመርጧል", style: const TextStyle(color: Colors.white)),
+                      ),
+                    ),
+                    if (selectedImage != null)
+                       Padding(padding: const EdgeInsets.only(top: 10), child: ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.file(selectedImage!, height: 100, width: double.infinity, fit: BoxFit.cover))),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: Text(appStatus == 'pending' ? "ዝጋ" : "Cancel")),
+              if (appStatus != 'pending')
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700),
+                  onPressed: isDialogLoading ? null : () async {
+                    if (selectedImage == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("እባክዎ መጀመሪያ ደረሰኝ ይምረጡ!")));
+                      return;
+                    }
+                    setStateDialog(() => isDialogLoading = true);
+                    try {
+                      SharedPreferences prefs = await SharedPreferences.getInstance();
+                      String deviceId = prefs.getString('device_id') ?? '';
+                      final bytes = await selectedImage!.readAsBytes();
+                      final base64Image = base64Encode(bytes);
+                      
+                      DatabaseReference ref = FirebaseDatabase.instance.ref("students/$deviceId");
+                      await ref.update({"status": "pending", "receipt": base64Image});
+                      await prefs.setString('local_status', 'pending');
+
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        setState(() { appStatus = 'pending'; });
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ ደረሰኝዎ ተልኳል! በአጭር ጊዜ ውስጥ ይከፈታል!"), backgroundColor: Colors.green));
+                      }
+                    } catch (e) { 
+                      setStateDialog(() => isDialogLoading = false);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("⚠️ መላክ አልተቻለም፣ ኢንተርኔትዎን ያረጋግጡ!"), backgroundColor: Colors.red));
+                    }
+                  },
+                  child: isDialogLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Text("Send Receipt", style: TextStyle(color: Colors.white)),
+                ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context), 
-            child: const Text("ዝጋ"),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
-            onPressed: () {
-              Navigator.pop(context);
-              _launchAdmin();
-            },
-            icon: const Icon(Icons.send, color: Colors.white),
-            label: const Text("አድሚን አነጋግር (Telegram)", style: TextStyle(color: Colors.white)),
-          ),
-        ],
+          );
+        }
       ),
     );
   }
 
-  void _showAdminLogin(BuildContext context) {
+  void _showActivationLogin(BuildContext context) {
     TextEditingController pwdCtrl = TextEditingController();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF2C2C2C),
-        title: const Text("🛠 Admin VIP Unlock", style: TextStyle(color: Colors.white)),
-        content: TextField(controller: pwdCtrl, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: "Admin Password")),
+        title: const Text("🔐 Activation & Admin", style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("የእርስዎ መለያ (ID): $userShortId", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            TextField(controller: pwdCtrl, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: "የመክፈቻ ቁጥር ወይም Admin Password")),
+          ],
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
+              int expectedVipCode = userShortId * 3;
               if (pwdCtrl.text == "Matrix@2026") {
-                // 100% Offline VIP Unlock
-                SharedPreferences.getInstance().then((prefs) {
-                  prefs.setString('local_status', 'vip');
-                });
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen()));
+              } else if (pwdCtrl.text == expectedVipCode.toString()) {
+                SharedPreferences prefs = await SharedPreferences.getInstance();
+                String deviceId = prefs.getString('device_id') ?? '';
+                await prefs.setString('local_status', 'vip');
+                try {
+                  DatabaseReference ref = FirebaseDatabase.instance.ref("students/$deviceId");
+                  await ref.update({"status": "vip"});
+                } catch(e) {}
                 setState(() => appStatus = 'vip');
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("✅ አፑ በအောင်မြင်ነት VIP ተደርጓል!"), backgroundColor: Colors.green),
-                );
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ አፑ በအောင်မြင်ነት VIP ተደርጓል!"), backgroundColor: Colors.green));
               } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("❌ ትክክል ያልሆነ የጸጥታ ቃል!", style: TextStyle(color: Colors.white)), backgroundColor: Colors.red),
-                );
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("❌ ትክክል ያልሆነ መክፈቻ ኮድ!"), backgroundColor: Colors.red));
               }
             },
-            child: const Text("Unlock VIP"),
+            child: const Text("Enter"),
           ),
         ],
       ),
@@ -281,21 +418,11 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           children: const [
             CircleAvatar(radius: 18, backgroundColor: Colors.white, child: Icon(Icons.school, color: Colors.blue, size: 20)),
             SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('REMEDIAL MATRIX', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                Text('Educational Platform', style: TextStyle(fontSize: 12, color: Colors.greenAccent)),
-              ],
-            ),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('REMEDIAL MATRIX', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), Text('Educational Platform', style: TextStyle(fontSize: 12, color: Colors.greenAccent))]),
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.amber),
-            tooltip: "Refresh",
-            onPressed: refreshStatus,
-          ),
+          IconButton(icon: const Icon(Icons.refresh, color: Colors.amber), tooltip: "Refresh", onPressed: refreshStatus),
           if (isVIP) const Padding(padding: EdgeInsets.only(right: 12.0), child: Center(child: Icon(Icons.verified, color: Colors.amber, size: 26)))
         ],
       ),
@@ -312,73 +439,27 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.bottomCenter,
-                        end: Alignment.topCenter,
-                        colors: [Colors.black.withOpacity(0.8), Colors.transparent],
-                      ),
-                    ),
-                    child: const Text(
-                      "Remedial Matrix የስኬትዎ መንገድ",
-                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                    ),
+                    decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.bottomCenter, end: Alignment.topCenter, colors: [Colors.black.withOpacity(0.8), Colors.transparent])),
+                    child: const Text("Remedial Matrix የስኬትዎ መንገድ", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 15),
-            _buildColorButton(context, "🏆 Top 10 Leaderboard", Colors.amber.shade700, false, () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const LeaderboardScreen()));
-            }),
-            _buildColorButton(context, "🆕 Model Exams (2017-2018)", Colors.blue.shade600, false, () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams')));
-            }),
-            _buildColorButton(context, "📖 Remedial National Exam", Colors.teal.shade600, !isVIP, () {
-              if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'remedial_exams', title: 'Remedial Exams'))); }
-            }),
-            _buildColorButton(context, "🧠 Exam Trainer", Colors.purple.shade500, !isVIP, () {
-              if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'trainer', year: '2018', title: 'Exam Trainer'))); }
-            }),
-            _buildColorButton(context, "📝 Quizzes with Explanations", Colors.orange.shade600, !isVIP, () {
-              if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'quizzes', year: '2018', title: 'Quizzes'))); }
-            }),
-            _buildColorButton(context, "💡 Study Tips", Colors.pink.shade600, false, () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const StudyTipsScreen()));
-            }),
+            _buildColorButton(context, "🏆 Top 10 Leaderboard", Colors.amber.shade700, false, () { Navigator.push(context, MaterialPageRoute(builder: (_) => const LeaderboardScreen())); }),
+            _buildColorButton(context, "🆕 Model Exams (2017-2018)", Colors.blue.shade600, false, () { Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams'))); }),
+            _buildColorButton(context, "📖 Remedial National Exam", Colors.teal.shade600, !isVIP, () { if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'remedial_exams', title: 'Remedial Exams'))); } }),
+            _buildColorButton(context, "🧠 Exam Trainer", Colors.purple.shade500, !isVIP, () { if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'trainer', year: '2018', title: 'Exam Trainer'))); } }),
+            _buildColorButton(context, "📝 Quizzes with Explanations", Colors.orange.shade600, !isVIP, () { if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'quizzes', year: '2018', title: 'Quizzes'))); } }),
+            _buildColorButton(context, "💡 Study Tips", Colors.pink.shade600, false, () { Navigator.push(context, MaterialPageRoute(builder: (_) => const StudyTipsScreen())); }),
             const Divider(color: Colors.white24, height: 25, thickness: 1),
-            _buildColorButton(context, "🚀 Go to Tutorial Class", Colors.blueAccent.shade700, !isVIP, () {
-              if (!isVIP) {
-                _showPremiumDialog(context);
-              } else {
-                _launchTutorial();
-              }
-            }),
+            _buildColorButton(context, "🚀 Go to Tutorial Class", Colors.blueAccent.shade700, !isVIP, () { if (!isVIP) { _showPremiumDialog(context); } else { _launchTutorial(); } }),
             const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.amber, 
-                    side: const BorderSide(color: Colors.amber),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  ),
-                  onPressed: _launchAdmin,
-                  icon: const Icon(Icons.support_agent, size: 18),
-                  label: const Text("Contact Admin", style: TextStyle(fontSize: 13)),
-                ),
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.grey, 
-                    side: const BorderSide(color: Colors.grey),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  ),
-                  onPressed: () => _showAdminLogin(context),
-                  icon: const Icon(Icons.admin_panel_settings, size: 18),
-                  label: const Text("Admin Panel", style: TextStyle(fontSize: 13)),
-                ),
+                OutlinedButton.icon(style: OutlinedButton.styleFrom(foregroundColor: Colors.amber, side: const BorderSide(color: Colors.amber), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8)), onPressed: _launchAdmin, icon: const Icon(Icons.support_agent, size: 18), label: const Text("Contact Admin", style: TextStyle(fontSize: 13))),
+                OutlinedButton.icon(style: OutlinedButton.styleFrom(foregroundColor: Colors.greenAccent, side: const BorderSide(color: Colors.greenAccent), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8)), onPressed: () => _showActivationLogin(context), icon: const Icon(Icons.vpn_key, size: 18), label: const Text("Enter Code / Admin", style: TextStyle(fontSize: 13))),
               ],
             ),
             const SizedBox(height: 20),
@@ -394,12 +475,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       child: SizedBox(
         width: double.infinity,
         child: ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
+          style: ElevatedButton.styleFrom(backgroundColor: color, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
           onPressed: onTap,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -410,6 +486,256 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// -------------------------------------------------------------
+// የ ADMIN DASHBOARD እና ሁሉም አዳዲስ ገጾች (Broadcast, Student List)
+// -------------------------------------------------------------
+
+class AdminDashboardScreen extends StatelessWidget {
+  const AdminDashboardScreen({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("🛠 Admin Dashboard")),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), backgroundColor: Colors.amber, minimumSize: const Size(double.infinity, 50)),
+              onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminReceiptsScreen())); },
+              icon: const Icon(Icons.receipt_long, color: Colors.black),
+              label: const Text("📥 አዲስ ደረሰኞችን አረጋግጥ (Approve)", style: TextStyle(fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 15),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), backgroundColor: Colors.blueAccent, minimumSize: const Size(double.infinity, 50)),
+              onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminStudentListScreen())); },
+              icon: const Icon(Icons.group, color: Colors.white),
+              label: const Text("👥 የተመዘገቡ ተማሪዎችን እይ", style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 15),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16), backgroundColor: Colors.green, minimumSize: const Size(double.infinity, 50)),
+              onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminBroadcastScreen())); },
+              icon: const Icon(Icons.campaign, color: Colors.white),
+              label: const Text("📢 ማስታወቂያ ላክ (Broadcast)", style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AdminBroadcastScreen extends StatefulWidget {
+  const AdminBroadcastScreen({Key? key}) : super(key: key);
+  @override
+  _AdminBroadcastScreenState createState() => _AdminBroadcastScreenState();
+}
+
+class _AdminBroadcastScreenState extends State<AdminBroadcastScreen> {
+  final TextEditingController titleCtrl = TextEditingController();
+  final TextEditingController msgCtrl = TextEditingController();
+  bool isSending = false;
+
+  Future<void> sendBroadcast() async {
+    if (titleCtrl.text.isEmpty || msgCtrl.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ርዕስ እና መልዕክት ያስገቡ!")));
+      return;
+    }
+    setState(() => isSending = true);
+    try {
+      DatabaseReference ref = FirebaseDatabase.instance.ref("announcement");
+      await ref.set({
+        "title": titleCtrl.text.trim(),
+        "message": msgCtrl.text.trim(),
+        "time": DateTime.now().millisecondsSinceEpoch,
+      });
+      if (mounted) {
+        setState(() => isSending = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ ማስታወቂያው ለሁሉም ተማሪዎች ተልኳል!"), backgroundColor: Colors.green));
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => isSending = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("❌ መላክ አልተቻለም!"), backgroundColor: Colors.red));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("📢 ማስታወቂያ ላክ (Broadcast)")),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextField(controller: titleCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: "የማስታወቂያው ርዕስ", border: OutlineInputBorder())),
+            const SizedBox(height: 15),
+            TextField(controller: msgCtrl, maxLines: 5, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: "ሙሉ መልዕክት", border: OutlineInputBorder())),
+            const SizedBox(height: 30),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, minimumSize: const Size(double.infinity, 50)),
+              onPressed: isSending ? null : sendBroadcast,
+              child: isSending ? const CircularProgressIndicator(color: Colors.white) : const Text("ላክ (Send Broadcast)", style: TextStyle(fontSize: 18, color: Colors.white)),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AdminReceiptsScreen extends StatefulWidget {
+  const AdminReceiptsScreen({Key? key}) : super(key: key);
+  @override
+  _AdminReceiptsScreenState createState() => _AdminReceiptsScreenState();
+}
+
+class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
+  List<Map<dynamic, dynamic>> pendingStudents = [];
+  bool isLoading = true;
+
+  @override
+  void initState() { super.initState(); fetchReceipts(); }
+
+  Future<void> fetchReceipts() async {
+    try {
+      DatabaseReference ref = FirebaseDatabase.instance.ref("students");
+      final snapshot = await ref.get();
+      List<Map<dynamic, dynamic>> temp = [];
+      if (snapshot.exists) {
+        Map<dynamic, dynamic> values = snapshot.value as Map<dynamic, dynamic>;
+        values.forEach((key, value) {
+          if (value['status'] == 'pending' && value['receipt'] != null) {
+            Map<dynamic, dynamic> studentData = Map.from(value);
+            studentData['device_id'] = key;
+            temp.add(studentData);
+          }
+        });
+      }
+      if (mounted) setState(() { pendingStudents = temp; isLoading = false; });
+    } catch (e) { 
+      if (mounted) setState(() => isLoading = false); 
+    }
+  }
+
+  Future<void> decideReceipt(String deviceId, String decision) async {
+    try {
+      DatabaseReference ref = FirebaseDatabase.instance.ref("students/$deviceId");
+      await ref.update({"status": decision});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(decision == 'vip' ? "✅ አፅድቀዋል!" : "❌ አልፀደቀም")));
+        fetchReceipts();
+      }
+    } catch (e) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("📥 Pending Receipts")),
+      body: isLoading 
+        ? const Center(child: CircularProgressIndicator()) 
+        : pendingStudents.isEmpty 
+          ? const Center(child: Text("ምንም አዲስ ደረሰኝ የለም!", style: TextStyle(fontSize: 18))) 
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: pendingStudents.length,
+              itemBuilder: (context, index) {
+                var student = pendingStudents[index];
+                return Card(
+                  color: const Color(0xFF2C2C2C),
+                  margin: const EdgeInsets.only(bottom: 20),
+                  child: Column(
+                    children: [
+                      Padding(padding: const EdgeInsets.all(8.0), child: Text("ስም: ${student['full_name']} | መስመር: ${student['stream']}", style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16))),
+                      student['receipt'] != null 
+                        ? Image.memory(base64Decode(student['receipt']), height: 300, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 100))
+                        : const Icon(Icons.broken_image, size: 100),
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: () => decideReceipt(student['device_id'], 'rejected'), icon: const Icon(Icons.close, color: Colors.white), label: const Text("Decline")),
+                            ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: () => decideReceipt(student['device_id'], 'vip'), icon: const Icon(Icons.check, color: Colors.white), label: const Text("Approve")),
+                          ],
+                        ),
+                      )
+                    ],
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
+
+class AdminStudentListScreen extends StatefulWidget {
+  const AdminStudentListScreen({Key? key}) : super(key: key);
+  @override
+  _AdminStudentListScreenState createState() => _AdminStudentListScreenState();
+}
+
+class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
+  List<Map<dynamic, dynamic>> students = [];
+  bool isLoading = true;
+
+  @override
+  void initState() { super.initState(); fetchStudents(); }
+
+  Future<void> fetchStudents() async {
+    try {
+      DatabaseReference ref = FirebaseDatabase.instance.ref("students");
+      final snapshot = await ref.get();
+      if (snapshot.exists) {
+        Map<dynamic, dynamic> values = snapshot.value as Map<dynamic, dynamic>;
+        List<Map<dynamic, dynamic>> temp = [];
+        values.forEach((key, value) { temp.add(value); });
+        if (mounted) setState(() { students = temp; isLoading = false; });
+      } else {
+        if (mounted) setState(() => isLoading = false);
+      }
+    } catch (e) { 
+      if (mounted) setState(() => isLoading = false); 
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("👥 የተመዘገቡ ተማሪዎች")),
+      body: isLoading 
+        ? const Center(child: CircularProgressIndicator()) 
+        : students.isEmpty 
+          ? const Center(child: Text("ምንም የተመዘገበ ተማሪ የለም!", style: TextStyle(fontSize: 18))) 
+          : ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: students.length,
+              itemBuilder: (context, index) {
+                var s = students[index];
+                bool isVip = s['status'] == 'vip';
+                return Card(
+                  color: const Color(0xFF2C2C2C),
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: ListTile(
+                    leading: CircleAvatar(backgroundColor: isVip ? Colors.amber : Colors.blueGrey, child: Icon(isVip ? Icons.verified : Icons.person, color: Colors.white)),
+                    title: Text(s['full_name'] ?? 'ስም የሌለው', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    subtitle: Text("መስመር: ${s['stream']} | መለያ (ID): ${s['short_id'] ?? '-'}", style: const TextStyle(color: Colors.white70)),
+                    trailing: Text(isVip ? "💎 VIP" : "🆓 Free", style: TextStyle(color: isVip ? Colors.greenAccent : Colors.orangeAccent, fontWeight: FontWeight.bold)),
+                  ),
+                );
+              },
+            ),
     );
   }
 }
@@ -435,10 +761,7 @@ class LeaderboardScreen extends StatelessWidget {
           return Card(
             color: const Color(0xFF2C2C2C),
             child: ListTile(
-              leading: CircleAvatar(
-                backgroundColor: index == 0 ? Colors.amber : index == 1 ? Colors.grey.shade400 : Colors.brown.shade300,
-                child: Text("${index + 1}", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-              ),
+              leading: CircleAvatar(backgroundColor: index == 0 ? Colors.amber : index == 1 ? Colors.grey.shade400 : Colors.brown.shade300, child: Text("${index + 1}", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
               title: Text(user['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
               subtitle: Text("${user['subject']} • ${user['method']}", style: const TextStyle(color: Colors.greenAccent)),
               trailing: Text("${user['score']} Pts", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.amber)),
