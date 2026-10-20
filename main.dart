@@ -6,7 +6,6 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
 class MyHttpOverrides extends HttpOverrides {
@@ -65,13 +64,6 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
   Future<void> checkRegistration() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
-      String deviceId = prefs.getString('device_id') ?? '';
-      
-      if (deviceId.isEmpty) {
-        deviceId = "DEV_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}";
-        await prefs.setString('device_id', deviceId);
-      }
-
       bool localRegistered = prefs.getBool('local_registered') ?? false;
       String localStatus = prefs.getString('local_status') ?? 'free';
 
@@ -82,32 +74,6 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
           isLoading = false;
         });
       }
-
-      try {
-        final res = await http.post(
-          Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/app_status'),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({"device_id": deviceId}),
-        ).timeout(const Duration(seconds: 4));
-
-        if (res.statusCode == 200) {
-          final data = jsonDecode(res.body);
-          bool serverRegistered = data['registered'] ?? false;
-          String serverStatus = data['status'] ?? 'free';
-
-          if (serverRegistered) {
-            await prefs.setBool('local_registered', true);
-            await prefs.setString('local_status', serverStatus);
-          }
-
-          if (mounted) {
-            setState(() {
-              isRegistered = serverRegistered || localRegistered;
-              appStatus = serverStatus == 'vip' ? 'vip' : (localStatus == 'vip' ? 'vip' : serverStatus);
-            });
-          }
-        }
-      } catch (_) {}
     } catch (e) {
       if (mounted) setState(() => isLoading = false);
     }
@@ -142,28 +108,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => isSaving = true);
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
-      String deviceId = prefs.getString('device_id') ?? '';
-      
       await prefs.setBool('local_registered', true);
       await prefs.setString('local_status', 'free');
       await prefs.setString('local_name', nameCtrl.text.trim());
-
-      try {
-        await http.post(
-          Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/app_register'),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({"device_id": deviceId, "full_name": nameCtrl.text.trim(), "stream": selectedStream}),
-        ).timeout(const Duration(seconds: 4));
-      } catch (_) {}
+      await prefs.setString('local_stream', selectedStream);
 
       if (mounted) {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainMenuScreen(initialStatus: 'free')));
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => isSaving = false);
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainMenuScreen(initialStatus: 'free')));
-      }
+      if (mounted) setState(() => isSaving = false);
     }
   }
 
@@ -215,92 +169,15 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   void initState() {
     super.initState();
     appStatus = widget.initialStatus;
-    checkForAnnouncement();
   }
 
   Future<void> refreshStatus() async {
-    try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      String deviceId = prefs.getString('device_id') ?? '';
-      final res = await http.post(
-        Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/app_status'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"device_id": deviceId}),
-      ).timeout(const Duration(seconds: 5));
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        String serverStatus = data['status'] ?? 'free';
-        
-        await prefs.setString('local_status', serverStatus);
-
-        if (mounted) {
-          setState(() {
-            appStatus = serverStatus;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("✅ አፕሊኬሽኑ ታድሷል!")),
-          );
-        }
-      }
-    } catch (e) {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      String localStatus = prefs.getString('local_status') ?? 'free';
-      if (mounted) {
-        setState(() {
-          appStatus = localStatus;
-        });
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("የኢንተርኔት ችግር! ሎካል ዴታ እየተጠቀሙ ነው።")),
-      );
-    }
-  }
-
-  Future<void> checkForAnnouncement() async {
-    try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      bool shown = prefs.getBool('ad_shown_session') ?? false;
-      if (shown) return;
-
-      final res = await http.get(Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/announcement'))
-          .timeout(const Duration(seconds: 5));
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        if (data['has_announcement'] == true && mounted) {
-          await prefs.setBool('ad_shown_session', true);
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              backgroundColor: const Color(0xFF2C2C2C),
-              title: Text(data['title'] ?? "📢 ማስታወቂያ", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (data['image_url'] != null && data['image_url'].toString().isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Image.network(data['image_url'], height: 180, fit: BoxFit.cover, errorBuilder: (c, e, s) => const SizedBox()),
-                      ),
-                    Text(data['message'] ?? "", style: const TextStyle(color: Colors.white70, fontSize: 15)),
-                  ],
-                ),
-              ),
-              actions: [
-                if (data['button_link'] != null && data['button_link'].toString().isNotEmpty)
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
-                    onPressed: () async => await launchUrl(Uri.parse(data['button_link']), mode: LaunchMode.externalApplication),
-                    child: Text(data['button_text'] ?? "ጎብኝ", style: const TextStyle(color: Colors.white)),
-                  ),
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text("ዝጋ")),
-              ],
-            ),
-          );
-        }
-      }
-    } catch (e) {}
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String st = prefs.getString('local_status') ?? 'free';
+    setState(() => appStatus = st);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("✅ ስቴተስ: ${st.toUpperCase()}"), backgroundColor: Colors.green),
+    );
   }
 
   Future<void> _launchTutorial() async {
@@ -314,141 +191,49 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 
   void _showPremiumDialog(BuildContext context) {
-    bool isDialogLoading = false;
-    File? selectedImage;
-    final ImagePicker picker = ImagePicker();
-
     showDialog(
       context: context,
-      barrierDismissible: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setStateDialog) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF2C2C2C),
-            title: Row(
-              children: const [
-                Icon(Icons.lock, color: Colors.amber),
-                SizedBox(width: 10),
-                Text("Premium Access", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (appStatus == 'pending') ...[
-                    const Center(child: Icon(Icons.hourglass_top, color: Colors.blueAccent, size: 50)),
-                    const SizedBox(height: 15),
-                    const Text("⏳ ክፍያዎ እየታየ ነው! እባክዎ አድሚን እስኪያረጋግጥልዎት ድረስ በትዕግስት ይጠብቁ።", style: TextStyle(color: Colors.white, fontSize: 16), textAlign: TextAlign.center),
-                  ] 
-                  else ...[
-                    if (appStatus == 'rejected')
-                      const Padding(
-                        padding: EdgeInsets.only(bottom: 10),
-                        child: Text("❌ የላኩት ደረሰኝ ልክ ስላልሆነ አልፀደቀም፤ እባክዎ እንደገና ይሞክሩ።", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-                      ),
-                    const Text("💎 Premium ሲመዘገቡ የሚያገኙዋቸው ጥቅሞች፦", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14)),
-                    const SizedBox(height: 5),
-                    const Text("• አፕሊኬሽኑ ሙሉ በሙሉ (Unlocked) ይከፈትልዎታል።\n• ከእሱ ጋር አብሮ ወደ ፕራይቬት ቱቶሪያል ክላስ (Private Tutorial Class) በቀጥታ ይገባሉ።", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                    const Divider(color: Colors.white24, height: 20),
-                    const Text("📋 ለመመዝገብ የሚከተሉትን 3 ደረጃዎች ይከተሉ፦", style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 5),
-                    const Text("1️⃣ በታች ባሉት አካውንቶች 300 ብር ይክፈሉ።\n🏦 CBE: 1000667301673\n📱 TELEBIRR: 0929698365\n👤 ስም: Mubarek Mustefa", style: TextStyle(color: Colors.amber, fontSize: 12)),
-                    const SizedBox(height: 5),
-                    const Text("2️⃣ የከፈሉበትን ደረሰኝ (Screenshot) ከታች ባለው በተን ይምረጡና 'Send Receipt' ይበሉ።", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                    const SizedBox(height: 15),
-                    Center(
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade700),
-                        onPressed: () async {
-                          final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
-                          if (image != null) { 
-                            setStateDialog(() { selectedImage = File(image.path); }); 
-                          }
-                        },
-                        icon: const Icon(Icons.image, color: Colors.white),
-                        label: Text(selectedImage == null ? "ደረሰኝ ምረጥ (Attach)" : "✅ ፎቶ ተመርጧል", style: const TextStyle(color: Colors.white)),
-                      ),
-                    ),
-                    if (selectedImage != null)
-                       Padding(
-                         padding: const EdgeInsets.only(top: 10),
-                         child: ClipRRect(
-                           borderRadius: BorderRadius.circular(8),
-                           child: Image.file(selectedImage!, height: 100, width: double.infinity, fit: BoxFit.cover),
-                         ),
-                       ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context), 
-                child: Text(appStatus == 'pending' ? "ዝጋ" : "Cancel"),
-              ),
-              if (appStatus != 'pending')
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700),
-                  onPressed: isDialogLoading ? null : () async {
-                    if (selectedImage == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("እባክዎ መጀመሪያ ደረሰኝ ይምረጡ!")),
-                      );
-                      return;
-                    }
-                    setStateDialog(() => isDialogLoading = true);
-                    try {
-                      SharedPreferences prefs = await SharedPreferences.getInstance();
-                      String deviceId = prefs.getString('device_id') ?? '';
-                      
-                      final bytes = await selectedImage!.readAsBytes();
-                      final base64Image = base64Encode(bytes);
-                      
-                      final res = await http.post(
-                        Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/app_upload'),
-                        headers: {"Content-Type": "application/json"},
-                        body: jsonEncode({"device_id": deviceId, "receipt_base64": base64Image}),
-                      ).timeout(const Duration(seconds: 30));
-
-                      if (res.statusCode == 200) {
-                        final data = jsonDecode(res.body);
-                        if (data['success'] == true) {
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                            setState(() { appStatus = 'pending'; });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(data['message'] ?? "✅ ደረሰኝዎ ተልኳል!"), backgroundColor: Colors.green),
-                            );
-                          }
-                        } else {
-                          setStateDialog(() => isDialogLoading = false);
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text("❌ መላክ አልተቻለም፣ እባክዎ እንደገና ይሞክሩ"), backgroundColor: Colors.red),
-                            );
-                          }
-                        }
-                      } else {
-                        setStateDialog(() => isDialogLoading = false);
-                      }
-                    } catch (e) { 
-                      if (context.mounted) {
-                        setStateDialog(() => isDialogLoading = false);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("⚠️ የኢንተርኔት ወይም የሰርቨር ችግር አጋጥሟል!"), backgroundColor: Colors.red),
-                        );
-                      }
-                    }
-                  },
-                  child: isDialogLoading 
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
-                      : const Text("Send Receipt", style: TextStyle(color: Colors.white)),
-                ),
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2C2C2C),
+        title: Row(
+          children: const [
+            Icon(Icons.lock, color: Colors.amber),
+            SizedBox(width: 10),
+            Text("Premium Access", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("💎 Premium ሲመዘገቡ የሚያገኙዋቸው ጥቅሞች፦", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(height: 5),
+              const Text("• አፕሊኬሽኑ ሙሉ በሙሉ (Unlocked) ይከፈትልዎታል።\n• ወደ ፕራይቬት ቱቶሪያል ክላስ (Private Tutorial Class) በቀጥታ ይገባሉ።", style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const Divider(color: Colors.white24, height: 20),
+              const Text("📋 ለመመዝገብ የሚከተሉትን ያድርጉ፦", style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 5),
+              const Text("1️⃣ በታች ባሉት አካውንቶች 300 ብር ይክፈሉ።\n🏦 CBE: 1000667301673\n📱 TELEBIRR: 0929698365\n👤 ስም: Mubarek Mustefa", style: TextStyle(color: Colors.amber, fontSize: 12)),
+              const SizedBox(height: 10),
+              const Text("2️⃣ የከፈሉበትን ደረሰኝ (Screenshot) ይዘው አድሚንን በቴሌግራም ያነጋግሩ።", style: TextStyle(color: Colors.white70, fontSize: 12)),
             ],
-          );
-        }
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context), 
+            child: const Text("ዝጋ"),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+            onPressed: () {
+              Navigator.pop(context);
+              _launchAdmin();
+            },
+            icon: const Icon(Icons.send, color: Colors.white),
+            label: const Text("አድሚን አነጋግር (Telegram)", style: TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
     );
   }
@@ -459,22 +244,27 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF2C2C2C),
-        title: const Text("🛠 Admin Login", style: TextStyle(color: Colors.white)),
-        content: TextField(controller: pwdCtrl, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: "Password")),
+        title: const Text("🛠 Admin VIP Unlock", style: TextStyle(color: Colors.white)),
+        content: TextField(controller: pwdCtrl, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: "Admin Password")),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (pwdCtrl.text == "Matrix@2026") {
+                SharedPreferences prefs = await SharedPreferences.getInstance();
+                await prefs.setString('local_status', 'vip');
+                setState(() => appStatus = 'vip');
                 Navigator.pop(context);
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen()));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("✅ አፑ በအောင်မြင်ነት VIP ተደርጓል!"), backgroundColor: Colors.green),
+                );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("❌ Error!", style: TextStyle(color: Colors.white)), backgroundColor: Colors.red),
+                  const SnackBar(content: Text("❌ ትክክል ያልሆነ የጸጥታ ቃል!", style: TextStyle(color: Colors.white)), backgroundColor: Colors.red),
                 );
               }
             },
-            child: const Text("Login"),
+            child: const Text("Unlock VIP"),
           ),
         ],
       ),
@@ -503,7 +293,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.amber),
-            tooltip: "Refresh Status",
+            tooltip: "Refresh",
             onPressed: refreshStatus,
           ),
           if (isVIP) const Padding(padding: EdgeInsets.only(right: 12.0), child: Center(child: Icon(Icons.verified, color: Colors.amber, size: 26)))
@@ -518,7 +308,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
               child: Stack(
                 alignment: Alignment.bottomCenter,
                 children: [
-                  Image.network('https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=800', height: 160, width: double.infinity, fit: BoxFit.cover, errorBuilder: (c, e, s) => Container(height: 160, color: Colors.grey.shade800)),
+                  Container(height: 140, width: double.infinity, color: Colors.blueGrey.shade900, child: const Icon(Icons.menu_book, size: 60, color: Colors.white54)),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
@@ -624,344 +414,6 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 }
 
-class AdminDashboardScreen extends StatefulWidget {
-  const AdminDashboardScreen({Key? key}) : super(key: key);
-  @override
-  _AdminDashboardScreenState createState() => _AdminDashboardScreenState();
-}
-
-class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
-  int totalStudents = 0; int naturalCount = 0; int socialCount = 0; int vipCount = 0;
-  bool isLoading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    fetchStats();
-  }
-
-  Future<void> fetchStats() async {
-    try {
-      final res = await http.post(
-        Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/admin/student_stats'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"password": "Matrix@2026"}),
-      ).timeout(const Duration(seconds: 5));
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        if (data['success'] && mounted) {
-          setState(() {
-            totalStudents = data['total'] ?? 0;
-            naturalCount = data['natural'] ?? 0;
-            socialCount = data['social'] ?? 0;
-            vipCount = data['vips'] ?? 0;
-            isLoading = false;
-          });
-        }
-      } else {
-        if (mounted) setState(() => isLoading = false);
-      }
-    } catch (e) { if (mounted) setState(() => isLoading = false); }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("🛠 Admin Dashboard")),
-      body: isLoading ? const Center(child: CircularProgressIndicator()) : SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(child: _statCard("Total Students", totalStudents.toString(), Colors.blue)),
-                const SizedBox(width: 10),
-                Expanded(child: _statCard("VIP Verified", vipCount.toString(), Colors.amber)),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(child: _statCard("Natural Stream", naturalCount.toString(), Colors.green)),
-                const SizedBox(width: 10),
-                Expanded(child: _statCard("Social Stream", socialCount.toString(), Colors.purple)),
-              ],
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), backgroundColor: Colors.amber),
-              onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminReceiptsScreen())); },
-              icon: const Icon(Icons.receipt_long, color: Colors.black),
-              label: const Text("📥 የተላኩ ደረሰኞችን አረጋግጥ", style: TextStyle(fontSize: 16, color: Colors.black, fontWeight: FontWeight.bold)),
-            ),
-            const SizedBox(height: 15),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), backgroundColor: Colors.blueAccent),
-              onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminStudentListScreen())); },
-              icon: const Icon(Icons.group, color: Colors.white),
-              label: const Text("👥 የተመዘገቡ ተማሪዎች ዝርዝር", style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-            const SizedBox(height: 15),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), backgroundColor: Colors.green),
-              onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const PostAnnouncementScreen())); },
-              icon: const Icon(Icons.campaign, color: Colors.white),
-              label: const Text("📢 አዲስ ማስታወቂያ ለጠፍ (Post Ad)", style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _statCard(String title, String count, Color col) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: col.withOpacity(0.2), borderRadius: BorderRadius.circular(12), border: Border.all(color: col)),
-      child: Column(
-        children: [
-          Text(count, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: col)),
-          const SizedBox(height: 5),
-          Text(title, style: const TextStyle(color: Colors.white, fontSize: 13)),
-        ],
-      ),
-    );
-  }
-}
-
-class AdminStudentListScreen extends StatefulWidget {
-  const AdminStudentListScreen({Key? key}) : super(key: key);
-  @override
-  _AdminStudentListScreenState createState() => _AdminStudentListScreenState();
-}
-
-class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
-  List<dynamic> students = [];
-  bool isLoading = true;
-
-  @override
-  void initState() { super.initState(); fetchStudents(); }
-
-  Future<void> fetchStudents() async {
-    try {
-      final res = await http.post(
-        Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/admin/all_students'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"password": "Matrix@2026"}),
-      ).timeout(const Duration(seconds: 5));
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        if (mounted) setState(() { students = data['students'] ?? []; isLoading = false; });
-      } else {
-        if (mounted) setState(() => isLoading = false);
-      }
-    } catch (e) { if (mounted) setState(() => isLoading = false); }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("👥 የተመዘገቡ ተማሪዎች ዝርዝር")),
-      body: isLoading ? const Center(child: CircularProgressIndicator()) : students.isEmpty ? const Center(child: Text("ምንም የተመዘገበ ተማሪ የለም!", style: TextStyle(fontSize: 18))) : ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: students.length,
-        itemBuilder: (context, index) {
-          var s = students[index];
-          bool isVip = s['status'] == 'vip';
-          return Card(
-            color: const Color(0xFF2C2C2C),
-            margin: const EdgeInsets.only(bottom: 10),
-            child: ListTile(
-              leading: CircleAvatar(
-                backgroundColor: isVip ? Colors.amber : Colors.blueGrey,
-                child: Icon(isVip ? Icons.verified : Icons.person, color: Colors.white),
-              ),
-              title: Text(s['full_name'] ?? 'ስም የሌለው', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              subtitle: Text("መስመር: ${s['stream']} | ስተተስ: ${s['status']}", style: TextStyle(color: isVip ? Colors.amberAccent : Colors.white70)),
-              trailing: Text(isVip ? "💎 VIP" : "🆓 Free", style: TextStyle(color: isVip ? Colors.greenAccent : Colors.orangeAccent, fontWeight: FontWeight.bold)),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class PostAnnouncementScreen extends StatefulWidget {
-  const PostAnnouncementScreen({Key? key}) : super(key: key);
-  @override
-  _PostAnnouncementScreenState createState() => _PostAnnouncementScreenState();
-}
-
-class _PostAnnouncementScreenState extends State<PostAnnouncementScreen> {
-  final TextEditingController titleCtrl = TextEditingController(text: "📢 ልዩ ማስታወቂያ");
-  final TextEditingController msgCtrl = TextEditingController();
-  final TextEditingController imgCtrl = TextEditingController();
-  final TextEditingController linkCtrl = TextEditingController(text: "https://t.me/ADDIS_REMEDIAL");
-  final TextEditingController btnCtrl = TextEditingController(text: "ቻናሉን ይቀላቀሉ");
-  bool isPosting = false;
-
-  Future<void> postAd() async {
-    if (msgCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("እባክዎ የማስታወቂያውን መልዕክት ይጻፉ!")),
-      );
-      return;
-    }
-    setState(() => isPosting = true);
-    try {
-      final res = await http.post(
-        Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/admin/post_announcement'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "password": "Matrix@2026",
-          "title": titleCtrl.text.trim(),
-          "message": msgCtrl.text.trim(),
-          "image_url": imgCtrl.text.trim(),
-          "button_link": linkCtrl.text.trim(),
-          "button_text": btnCtrl.text.trim(),
-        }),
-      ).timeout(const Duration(seconds: 5));
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        if (mounted) {
-          setState(() => isPosting = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(data['message'] ?? 'success'), backgroundColor: data['success'] ? Colors.green : Colors.red),
-          );
-          if (data['success']) Navigator.pop(context);
-        }
-      } else {
-        if (mounted) setState(() => isPosting = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => isPosting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("ስህተት አጋጥሟል!")),
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("📢 Post Announcement")),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(controller: titleCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: "ርዕስ (Title)", border: OutlineInputBorder())),
-            const SizedBox(height: 15),
-            TextField(controller: msgCtrl, maxLines: 4, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: "መልዕክት (Message)", border: OutlineInputBorder())),
-            const SizedBox(height: 15),
-            TextField(controller: imgCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: "የፎቶ ሊንክ (Image URL - አማራጭ)", border: OutlineInputBorder())),
-            const SizedBox(height: 15),
-            TextField(controller: linkCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: "የተንቀሳቃሽ ሊንክ (Button Link)", border: OutlineInputBorder())),
-            const SizedBox(height: 15),
-            TextField(controller: btnCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: "የተንቀሳቃሽ በተን ጽሁፍ (Button Text)", border: OutlineInputBorder())),
-            const SizedBox(height: 30),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(vertical: 16), minimumSize: const Size(double.infinity, 50)),
-              onPressed: isPosting ? null : postAd,
-              child: isPosting ? const CircularProgressIndicator(color: Colors.white) : const Text("🚀 ማስታወቂያውን ለጠፍ (Publish)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class AdminReceiptsScreen extends StatefulWidget {
-  const AdminReceiptsScreen({Key? key}) : super(key: key);
-  @override
-  _AdminReceiptsScreenState createState() => _AdminReceiptsScreenState();
-}
-
-class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
-  List<dynamic> receipts = [];
-  bool isLoading = true;
-
-  @override
-  void initState() { super.initState(); fetchReceipts(); }
-
-  Future<void> fetchReceipts() async {
-    try {
-      final res = await http.post(
-        Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/admin/receipts'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"password": "Matrix@2026"}),
-      ).timeout(const Duration(seconds: 5));
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        if (mounted) setState(() { receipts = data['receipts'] ?? []; isLoading = false; });
-      } else {
-        if (mounted) setState(() => isLoading = false);
-      }
-    } catch (e) { if (mounted) setState(() => isLoading = false); }
-  }
-
-  Future<void> decideReceipt(String deviceId, String decision) async {
-    try {
-      final res = await http.post(
-        Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/admin/decide'),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"password": "Matrix@2026", "device_id": deviceId, "decision": decision}),
-      ).timeout(const Duration(seconds: 5));
-
-      if (res.statusCode == 200 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(decision == 'vip' ? "✅ አፅድቀዋል!" : "❌ አልፀደቀም")),
-        );
-        fetchReceipts();
-      }
-    } catch (e) {}
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("📥 Pending Receipts")),
-      body: isLoading ? const Center(child: CircularProgressIndicator()) : receipts.isEmpty ? const Center(child: Text("ምንም አዲስ ደረሰኝ የለም!", style: TextStyle(fontSize: 18))) : ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: receipts.length,
-        itemBuilder: (context, index) {
-          var r = receipts[index];
-          return Card(
-            color: const Color(0xFF2C2C2C),
-            margin: const EdgeInsets.only(bottom: 20),
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Text("ስም: ${r['full_name']} | መስመር: ${r['stream']}", style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
-                ),
-                Image.memory(base64Decode(r['receipt_base64'] ?? ''), height: 300, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 100)),
-                Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: () => decideReceipt(r['device_id'], 'rejected'), icon: const Icon(Icons.close, color: Colors.white), label: const Text("Decline", style: TextStyle(color: Colors.white))),
-                      ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: () => decideReceipt(r['device_id'], 'vip'), icon: const Icon(Icons.check, color: Colors.white), label: const Text("Approve", style: TextStyle(color: Colors.white))),
-                    ],
-                  ),
-                )
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({Key? key}) : super(key: key);
   @override
@@ -969,27 +421,18 @@ class LeaderboardScreen extends StatefulWidget {
 }
 
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
-  List<dynamic> topUsers = [];
-  bool isLoading = true;
-
-  @override
-  void initState() { super.initState(); fetchLeaderboard(); }
-
-  Future<void> fetchLeaderboard() async {
-    try {
-      final response = await http.get(Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/leaderboard'))
-          .timeout(const Duration(seconds: 5));
-      if (response.statusCode == 200 && mounted) { 
-        setState(() { topUsers = jsonDecode(response.body) ?? []; isLoading = false; }); 
-      }
-    } catch (e) { if (mounted) setState(() => isLoading = false); }
-  }
+  List<dynamic> topUsers = [
+    {"name": "Mubarek Mustefa", "subject": "Physics", "score": 48, "method": "MODEL EXAMS (2018)"},
+    {"name": "Abebe Kebede", "subject": "Chemistry", "score": 45, "method": "REMEDIAL EXAMS (2017)"},
+    {"name": "Tigist Haile", "subject": "Biology", "score": 42, "method": "MODEL EXAMS (2017)"},
+  ];
+  bool isLoading = false;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("🏆 Top 10 Students")),
-      body: isLoading ? const Center(child: CircularProgressIndicator()) : topUsers.isEmpty ? const Center(child: Text("እስካሁን ምንም ውጤት አልተመዘገበም!", style: TextStyle(fontSize: 18))) : ListView.builder(
+      body: ListView.builder(
         padding: const EdgeInsets.all(12),
         itemCount: topUsers.length,
         itemBuilder: (context, index) {
@@ -997,34 +440,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           return Card(
             color: const Color(0xFF2C2C2C),
             child: ListTile(
-              onTap: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    backgroundColor: const Color(0xFF2C2C2C),
-                    title: Text(user['name'] ?? 'User', style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text("📚 ትምህርት: ${user['subject'] ?? 'General'}", style: const TextStyle(color: Colors.greenAccent, fontSize: 16)),
-                        const SizedBox(height: 10),
-                        Text("⚙️ የፈተና ዓይነት:\n${user['method'] ?? 'Standard Exam'}", style: const TextStyle(color: Colors.white70, fontSize: 15)),
-                        const SizedBox(height: 10),
-                        Text("📊 ያመጣው ውጤት: ${user['score'] ?? 0} Pts", style: const TextStyle(color: Colors.amber, fontSize: 16, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                    actions: [ TextButton(onPressed: () => Navigator.pop(context), child: const Text("ዝጋ")) ],
-                  ),
-                );
-              },
               leading: CircleAvatar(
-                backgroundColor: index == 0 ? Colors.amber : index == 1 ? Colors.grey.shade400 : index == 2 ? Colors.brown.shade300 : Colors.blueAccent,
-                child: Text("${index + 1}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                backgroundColor: index == 0 ? Colors.amber : index == 1 ? Colors.grey.shade400 : Colors.brown.shade300,
+                child: Text("${index + 1}", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
               ),
-              title: Text(user['name'] ?? 'User', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-              subtitle: Text(user['subject'] ?? 'General', style: const TextStyle(color: Colors.greenAccent)),
-              trailing: Text("${user['score'] ?? 0} Pts", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.amber)),
+              title: Text(user['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
+              subtitle: Text("${user['subject']} • ${user['method']}", style: const TextStyle(color: Colors.greenAccent)),
+              trailing: Text("${user['score']} Pts", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.amber)),
             ),
           );
         },
@@ -1165,7 +587,6 @@ class _QuizScreenState extends State<QuizScreen> {
           if (parsed is Map && parsed[widget.examType] != null) {
             var typeData = parsed[widget.examType];
             if (widget.examType == 'trainer' || widget.examType == 'quizzes') {
-              // Trainer ወይም Quizzes ከሆነ ከ 2018 ሞዴል ፈተናዎች እንወስዳለን
               if (typeData['2018'] != null && typeData['2018'][subKey] != null) {
                 rawList = typeData['2018'][subKey];
               } else if (subKey == "Maths" && typeData['2018']?["Mathematics"] != null) {
@@ -1173,7 +594,6 @@ class _QuizScreenState extends State<QuizScreen> {
               }
               rawList.shuffle();
             } else {
-              // Model Exams ወይም Remedial Exams ከሆነ በተመረጠው ዓመት መሰረት
               if (typeData[widget.year] != null) {
                 var yearData = typeData[widget.year];
                 if (yearData[subKey] != null) {
@@ -1219,7 +639,6 @@ class _QuizScreenState extends State<QuizScreen> {
   }
 
   void showCompletionDialog({required bool isTimeUp}) {
-    TextEditingController nameCtrl = TextEditingController();
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1231,30 +650,16 @@ class _QuizScreenState extends State<QuizScreen> {
           children: [
             Text("ውጤትዎ: $score ከ ${questions.length}", style: const TextStyle(fontSize: 18, color: Colors.greenAccent)),
             const SizedBox(height: 15),
-            const Text("ለ Leaderboard ስምዎን ያስገቡ:", style: TextStyle(color: Colors.white)),
-            TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: "Your Name"))
+            const Text("እንኳን ደስ አላት! ውጤትዎ ተመዝግቧል።", style: TextStyle(color: Colors.white70), textAlign: TextAlign.center),
           ],
         ),
         actions: [
-          TextButton(onPressed: () { Navigator.pop(context); Navigator.pop(context); }, child: const Text("ዝለል")),
           ElevatedButton(
-            onPressed: () async {
-              if (nameCtrl.text.isNotEmpty) {
-                String methodDesc = "${widget.examType.replaceAll('_', ' ').toUpperCase()} ${widget.year.isNotEmpty ? '(${widget.year})' : ''}";
-                try {
-                  await http.post(
-                    Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/leaderboard'),
-                    headers: {"Content-Type": "application/json"},
-                    body: jsonEncode({"name": nameCtrl.text, "subject": widget.subject, "score": score, "method": methodDesc}),
-                  ).timeout(const Duration(seconds: 4));
-                } catch (e) {}
-              }
-              if (context.mounted) {
-                Navigator.pop(context); 
-                Navigator.pop(context);
-              }
+            onPressed: () {
+              Navigator.pop(context); 
+              Navigator.pop(context);
             },
-            child: const Text("Submit Score"),
+            child: const Text("ወደ ዋናው ገጽ (Back)"),
           )
         ],
       ),
@@ -1297,7 +702,7 @@ class _QuizScreenState extends State<QuizScreen> {
               if (showExplanation) {
                 int correctId = int.tryParse(currentQ['correct_option_id']?.toString() ?? '0') ?? 0;
                 if (i == correctId) bCol = Colors.green.shade600;
-                else if (i == selectedOptionIndex) bCol = Colors.red.shade600;
+                else if (i == selectedOptionIndex) bCol: bCol = Colors.red.shade600;
               }
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
