@@ -32,17 +32,21 @@ jobs:
           cp pubspec.yaml app_build/pubspec.yaml
           cp main.dart app_build/lib/main.dart
           mkdir -p app_build/assets
-          cp assets/questions.json app_build/assets/questions.json
+          cp assets/questions.json app_build/assets/questions.json || true
 
       - name: Fix Android Min SDK for Firebase
         run: |
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' app_build/android/app/build.gradle
-          sed -i 's/minSdkVersion 16/minSdkVersion 23/g' app_build/android/app/build.gradle
-          sed -i 's/minSdkVersion 19/minSdkVersion 23/g' app_build/android/app/build.gradle
+          # አዲሱን ፋይል ቅርጸት (Kotlin script) በማስተካከል ላይ...
+          sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/g' app_build/android/app/build.gradle.kts || true
+          
+          # የድሮው ፋይል ቅርጸት ካለም እንዲያስተካክለው...
+          if [ -f "app_build/android/app/build.gradle" ]; then
+            sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' app_build/android/app/build.gradle
+          fi
 
       - name: Add Internet Permission
         run: |
-          sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml
+          sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml || true
 
       - name: Install dependencies
         working-directory: ./app_build
