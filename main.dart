@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 class MyHttpOverrides extends HttpOverrides {
   @override
@@ -87,7 +88,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
           Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/app_status'),
           headers: {"Content-Type": "application/json"},
           body: jsonEncode({"device_id": deviceId}),
-        ).timeout(const Duration(seconds: 5));
+        ).timeout(const Duration(seconds: 4));
 
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
@@ -152,7 +153,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/app_register'),
           headers: {"Content-Type": "application/json"},
           body: jsonEncode({"device_id": deviceId, "full_name": nameCtrl.text.trim(), "stream": selectedStream}),
-        ).timeout(const Duration(seconds: 5));
+        ).timeout(const Duration(seconds: 4));
       } catch (_) {}
 
       if (mounted) {
@@ -225,7 +226,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/app_status'),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"device_id": deviceId}),
-      ).timeout(const Duration(seconds: 6));
+      ).timeout(const Duration(seconds: 5));
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -263,7 +264,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       if (shown) return;
 
       final res = await http.get(Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/announcement'))
-          .timeout(const Duration(seconds: 6));
+          .timeout(const Duration(seconds: 5));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         if (data['has_announcement'] == true && mounted) {
@@ -409,7 +410,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                         Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/app_upload'),
                         headers: {"Content-Type": "application/json"},
                         body: jsonEncode({"device_id": deviceId, "receipt_base64": base64Image}),
-                      ).timeout(const Duration(seconds: 25));
+                      ).timeout(const Duration(seconds: 30));
 
                       if (res.statusCode == 200) {
                         final data = jsonDecode(res.body);
@@ -548,10 +549,10 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
               if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'remedial_exams', title: 'Remedial Exams'))); }
             }),
             _buildColorButton(context, "🧠 Exam Trainer", Colors.purple.shade500, !isVIP, () {
-              if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'trainer', year: '', title: 'Exam Trainer'))); }
+              if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'trainer', year: '2018', title: 'Exam Trainer'))); }
             }),
             _buildColorButton(context, "📝 Quizzes with Explanations", Colors.orange.shade600, !isVIP, () {
-              if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'quizzes', year: '', title: 'Quizzes'))); }
+              if (!isVIP) { _showPremiumDialog(context); } else { Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'quizzes', year: '2018', title: 'Quizzes'))); }
             }),
             _buildColorButton(context, "💡 Study Tips", Colors.pink.shade600, false, () {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const StudyTipsScreen()));
@@ -645,7 +646,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/admin/student_stats'),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"password": "Matrix@2026"}),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 5));
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -748,7 +749,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
         Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/admin/all_students'),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"password": "Matrix@2026"}),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 5));
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -822,7 +823,7 @@ class _PostAnnouncementScreenState extends State<PostAnnouncementScreen> {
           "button_link": linkCtrl.text.trim(),
           "button_text": btnCtrl.text.trim(),
         }),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 5));
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -895,7 +896,7 @@ class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
         Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/admin/receipts'),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"password": "Matrix@2026"}),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 5));
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -912,7 +913,7 @@ class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
         Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/admin/decide'),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"password": "Matrix@2026", "device_id": deviceId, "decision": decision}),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 5));
 
       if (res.statusCode == 200 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -977,7 +978,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   Future<void> fetchLeaderboard() async {
     try {
       final response = await http.get(Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/leaderboard'))
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 5));
       if (response.statusCode == 200 && mounted) { 
         setState(() { topUsers = jsonDecode(response.body) ?? []; isLoading = false; }); 
       }
@@ -1114,7 +1115,7 @@ class _QuizScreenState extends State<QuizScreen> {
   Timer? _timer; int _remainingSeconds = 0;
 
   @override
-  void initState() { super.initState(); fetchQuestions(); }
+  void initState() { super.initState(); loadLocalQuestions(); }
   @override
   void dispose() { _timer?.cancel(); super.dispose(); }
 
@@ -1130,24 +1131,13 @@ class _QuizScreenState extends State<QuizScreen> {
     });
   }
 
-  Future<void> fetchQuestions() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
+  Future<void> loadLocalQuestions() async {
     try {
-      final res = await http.get(Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/questions'))
-          .timeout(const Duration(seconds: 8));
-      if (res.statusCode == 200) { 
-        await prefs.setString('cached_questions', res.body); 
-        _loadFromJson(res.body); 
-      } else { 
-        _loadFromCache(prefs); 
-      }
-    } catch (e) { _loadFromCache(prefs); }
-  }
-
-  void _loadFromCache(SharedPreferences prefs) {
-    String? cData = prefs.getString('cached_questions');
-    if (cData != null) _loadFromJson(cData);
-    else if (mounted) setState(() { hasError = true; isLoading = false; });
+      final String jsonString = await rootBundle.loadString('assets/questions.json');
+      _loadFromJson(jsonString);
+    } catch (e) {
+      if (mounted) setState(() { hasError = true; isLoading = false; });
+    }
   }
 
   List<String> parseOptions(dynamic qData) {
@@ -1171,26 +1161,29 @@ class _QuizScreenState extends State<QuizScreen> {
         setState(() {
           String subKey = widget.subject;
           List<dynamic> rawList = [];
-          if (widget.examType == 'model_exams' || widget.examType == 'remedial_exams') {
-            if (parsed is Map && parsed[widget.examType] != null && parsed[widget.examType][widget.year] != null) {
-              var examData = parsed[widget.examType][widget.year];
-              if (examData[subKey] != null) {
-                rawList = examData[subKey];
-              } else if (subKey == "Maths" && examData["Mathematics"] != null) {
-                rawList = examData["Mathematics"];
-              } else if (subKey == "Mathematics" && examData["Maths"] != null) {
-                rawList = examData["Maths"];
+          
+          if (parsed is Map && parsed[widget.examType] != null) {
+            var typeData = parsed[widget.examType];
+            if (widget.examType == 'trainer' || widget.examType == 'quizzes') {
+              // Trainer ወይም Quizzes ከሆነ ከ 2018 ሞዴል ፈተናዎች እንወስዳለን
+              if (typeData['2018'] != null && typeData['2018'][subKey] != null) {
+                rawList = typeData['2018'][subKey];
+              } else if (subKey == "Maths" && typeData['2018']?["Mathematics"] != null) {
+                rawList = typeData['2018']["Mathematics"];
               }
-            }
-          } else {
-            if (parsed is Map && parsed['model_exams'] != null && parsed['model_exams']['2018'] != null) {
-               var examData = parsed['model_exams']['2018'];
-               if (examData[subKey] != null) {
-                 rawList = examData[subKey];
-               } else if (subKey == "Maths" && examData["Mathematics"] != null) {
-                 rawList = examData["Mathematics"];
-               }
-               rawList.shuffle(); 
+              rawList.shuffle();
+            } else {
+              // Model Exams ወይም Remedial Exams ከሆነ በተመረጠው ዓመት መሰረት
+              if (typeData[widget.year] != null) {
+                var yearData = typeData[widget.year];
+                if (yearData[subKey] != null) {
+                  rawList = yearData[subKey];
+                } else if (subKey == "Maths" && yearData["Mathematics"] != null) {
+                  rawList = yearData["Mathematics"];
+                } else if (subKey == "Mathematics" && yearData["Maths"] != null) {
+                  rawList = yearData["Maths"];
+                }
+              }
             }
           }
           
@@ -1253,7 +1246,7 @@ class _QuizScreenState extends State<QuizScreen> {
                     Uri.parse('https://telegram-poll-bot-s6l9.onrender.com/api/leaderboard'),
                     headers: {"Content-Type": "application/json"},
                     body: jsonEncode({"name": nameCtrl.text, "subject": widget.subject, "score": score, "method": methodDesc}),
-                  ).timeout(const Duration(seconds: 5));
+                  ).timeout(const Duration(seconds: 4));
                 } catch (e) {}
               }
               if (context.mounted) {
@@ -1271,8 +1264,8 @@ class _QuizScreenState extends State<QuizScreen> {
   @override
   Widget build(BuildContext context) {
     if (isLoading) return Scaffold(appBar: AppBar(title: Text(widget.subject)), body: const Center(child: CircularProgressIndicator()));
-    if (hasError) return Scaffold(appBar: AppBar(title: Text(widget.subject)), body: const Center(child: Text("No Internet or Error!", style: TextStyle(color: Colors.red))));
-    if (questions.isEmpty) return Scaffold(appBar: AppBar(title: Text(widget.subject)), body: const Center(child: Text("ጥያቄዎች በቅርቡ ይገባሉ!")));
+    if (hasError) return Scaffold(appBar: AppBar(title: Text(widget.subject)), body: const Center(child: Text("ጥያቄዎችን ማንበብ አልተቻለም!", style: TextStyle(color: Colors.red))));
+    if (questions.isEmpty) return Scaffold(appBar: AppBar(title: Text(widget.subject)), body: const Center(child: Text("ለዚህ ትምህርት ጥያቄዎች አልተገኙም!")));
 
     var currentQ = questions[currentQuestionIndex];
     List<String> options = parseOptions(currentQ);
