@@ -114,7 +114,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await prefs.setString('local_stream', selectedStream);
 
       if (mounted) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainMenuScreen(initialStatus: 'free')));
+        Navigator.pushReplacement(
+          context, 
+          MaterialPageRoute(builder: (_) => const MainMenuScreen(initialStatus: 'free'))
+        );
       }
     } catch (e) {
       if (mounted) setState(() => isSaving = false);
@@ -426,7 +429,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     {"name": "Abebe Kebede", "subject": "Chemistry", "score": 45, "method": "REMEDIAL EXAMS (2017)"},
     {"name": "Tigist Haile", "subject": "Biology", "score": 42, "method": "MODEL EXAMS (2017)"},
   ];
-  bool isLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -702,7 +704,7 @@ class _QuizScreenState extends State<QuizScreen> {
               if (showExplanation) {
                 int correctId = int.tryParse(currentQ['correct_option_id']?.toString() ?? '0') ?? 0;
                 if (i == correctId) bCol = Colors.green.shade600;
-                else if (i == selectedOptionIndex) bCol: bCol = Colors.red.shade600;
+                else if (i == selectedOptionIndex) bCol = Colors.red.shade600;
               }
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
