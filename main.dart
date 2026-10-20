@@ -1,29 +1,13 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io';
-import 'dart:math';
-import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
-class MyHttpOverrides extends HttpOverrides {
-  @override
-  HttpClient createHttpClient(SecurityContext? context) {
-    return super.createHttpClient(context)
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
-  }
-}
-
-void main() {
-  runZonedGuarded(() {
-    WidgetsFlutterBinding.ensureInitialized();
-    HttpOverrides.global = MyHttpOverrides();
-    runApp(const RemedialApp());
-  }, (error, stack) {
-    debugPrint('Caught error: $error');
-  });
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const RemedialApp());
 }
 
 class RemedialApp extends StatelessWidget {
@@ -81,7 +65,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator(color: Colors.amber)));
     if (!isRegistered) return const RegisterScreen();
     return MainMenuScreen(initialStatus: appStatus);
   }
@@ -101,25 +85,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> registerUser() async {
     if (nameCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("እባክዎ ሙሉ ስምዎን ያስገቡ!")),
+        const SnackBar(content: Text("እባክዎ ሙሉ ስምዎን ያስገቡ!"), backgroundColor: Colors.red),
       );
       return;
     }
+    
     setState(() => isSaving = true);
+    
     try {
+      // ዴታውን በቀጥታ ስልኩ ውስጥ ብቻ ሴቭ ማድረግ (ምንም ኢንተርኔት አያስፈልግም)
       SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.setBool('local_registered', true);
       await prefs.setString('local_status', 'free');
       await prefs.setString('local_name', nameCtrl.text.trim());
       await prefs.setString('local_stream', selectedStream);
 
+      // አጭር የ 0.5 ሰከንድ ማረፊያ (በተኑ መጫኑን ለማሳየት)
+      await Future.delayed(const Duration(milliseconds: 500));
+
       if (mounted) {
-        Navigator.pushReplacement(
-          context, 
-          MaterialPageRoute(builder: (_) => const MainMenuScreen(initialStatus: 'free'))
+        // የድሮውን ገጽ ሰባብሮ ወደ ዋናው ማለፍ
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const MainMenuScreen(initialStatus: 'free')),
+          (Route<dynamic> route) => false,
         );
       }
     } catch (e) {
+      debugPrint("Error saving: $e");
       if (mounted) setState(() => isSaving = false);
     }
   }
@@ -136,7 +128,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
           children: [
             const Text("እንኳን ደህና መጡ! 🌟\nእባክዎ ለመጀመር መረጃዎትን ይሙሉ", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
             const SizedBox(height: 30),
-            TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: "ሙሉ ስም (Full Name)", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person))),
+            TextField(
+              controller: nameCtrl, 
+              style: const TextStyle(color: Colors.white), 
+              decoration: const InputDecoration(
+                labelText: "ሙሉ ስም (Full Name)", 
+                border: OutlineInputBorder(), 
+                prefixIcon: Icon(Icons.person)
+              ),
+            ),
             const SizedBox(height: 20),
             const Text("የጥናት መስመር (Stream):", style: TextStyle(fontSize: 16, color: Colors.white70)),
             Row(
@@ -149,7 +149,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, padding: const EdgeInsets.symmetric(vertical: 16)),
               onPressed: isSaving ? null : registerUser,
-              child: isSaving ? const CircularProgressIndicator(color: Colors.white) : const Text("Get Started 🚀", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              child: isSaving 
+                  ? const CircularProgressIndicator(color: Colors.white) 
+                  : const Text("Get Started 🚀", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
             )
           ],
         ),
@@ -586,30 +588,26 @@ class _QuizScreenState extends State<QuizScreen> {
           String subKey = widget.subject;
           List<dynamic> rawList = [];
           
-          if (parsed is Map && parsed[widget.examType] != null) {
-            var typeData = parsed[widget.examType];
-            if (widget.examType == 'trainer' || widget.examType == 'quizzes') {
-              if (typeData['2018'] != null && typeData['2018'][subKey] != null) {
-                rawList = typeData['2018'][subKey];
-              } else if (subKey == "Maths" && typeData['2018']?["Mathematics"] != null) {
-                rawList = typeData['2018']["Mathematics"];
-              }
-              rawList.shuffle();
-            } else {
-              if (typeData[widget.year] != null) {
-                var yearData = typeData[widget.year];
-                if (yearData[subKey] != null) {
-                  rawList = yearData[subKey];
-                } else if (subKey == "Maths" && yearData["Mathematics"] != null) {
-                  rawList = yearData["Mathematics"];
-                } else if (subKey == "Mathematics" && yearData["Maths"] != null) {
-                  rawList = yearData["Maths"];
-                }
+          if (parsed is Map) {
+            String targetType = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? 'model_exams' : widget.examType;
+            String targetYear = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? '2018' : widget.year;
+            
+            if (parsed[targetType] != null && parsed[targetType][targetYear] != null) {
+              var yearData = parsed[targetType][targetYear];
+              if (yearData[subKey] != null) {
+                rawList = List.from(yearData[subKey]);
+              } else if (subKey == "Maths" && yearData["Mathematics"] != null) {
+                rawList = List.from(yearData["Mathematics"]);
+              } else if (subKey == "Mathematics" && yearData["Maths"] != null) {
+                rawList = List.from(yearData["Maths"]);
               }
             }
           }
           
           questions = rawList.where((q) => q != null && q is Map && q['question'] != null).toList();
+          if (widget.examType == 'trainer' || widget.examType == 'quizzes') {
+            questions.shuffle();
+          }
           isLoading = false;
           if (questions.isNotEmpty) fnStartTimer(questions.length);
         });
