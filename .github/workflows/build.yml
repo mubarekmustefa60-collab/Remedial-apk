@@ -1,0 +1,51 @@
+name: Build Remedial Matrix APK
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Create Flutter Project (Auto Generate)
+        run: flutter create app_build
+
+      - name: Move Source Files
+        run: |
+          cp main.dart app_build/lib/main.dart
+          cp pubspec.yaml app_build/pubspec.yaml
+
+      - name: Add Internet Permission for Release
+        run: |
+          sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Install dependencies
+        working-directory: ./app_build
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: ./app_build
+        run: flutter build apk --release
+
+      - name: Upload APK File
+        uses: actions/upload-artifact@v3
+        with:
+          name: RemedialMatrix-App
+          path: app_build/build/app/outputs/flutter-apk/app-release.apk
