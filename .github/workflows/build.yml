@@ -1,32 +1,52 @@
-name: remedial_matrix
-description: Remedial Matrix Educational App
-publish_to: 'none'
-version: 1.0.0+1
+name: Build Remedial Matrix APK
 
-environment:
-  sdk: '>=3.0.0 <4.0.0'
+on:
+  push:
+    branches:
+      - main
 
-dependencies:
-  flutter:
-    sdk: flutter
-  cupertino_icons: ^1.0.2
-  url_launcher: 6.1.14
-  shared_preferences: 2.2.1
-  firebase_core: 2.24.2
-  firebase_database: 10.3.8
-  image_picker: 0.8.9
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-dev_dependencies:
-  flutter_launcher_icons: "^0.13.1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-flutter_icons:
-  android: "ic_launcher"
-  ios: true
-  image_path: "assets/logo.png"
-  min_sdk_version: 23
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
-flutter:
-  uses-material-design: true
-  assets:
-    - assets/questions.json
-    - assets/logo.png
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Create Flutter Project
+        run: flutter create app_build
+
+      - name: Copy Files into Project
+        run: |
+          cp pubspec.yaml app_build/pubspec.yaml
+          cp main.dart app_build/lib/main.dart
+          mkdir -p app_build/assets
+          cp assets/questions.json app_build/assets/questions.json || true
+          cp assets/logo.png app_build/assets/logo.png || true
+
+      - name: Install dependencies & Generate Logo
+        working-directory: ./app_build
+        run: |
+          flutter pub get
+          flutter pub run flutter_launcher_icons
+
+      - name: Build APK
+        working-directory: ./app_build
+        run: flutter build apk --release
+
+      - name: Upload APK File
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemedialMatrix-App
+          path: app_build/build/app/outputs/flutter-apk/app-release.apk
