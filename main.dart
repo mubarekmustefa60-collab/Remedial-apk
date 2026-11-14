@@ -10,7 +10,6 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 
-// የአሁኑ የአፕሊኬሽኑ ቨርሽን (ወደፊት አፕዴት ስታደርግ ይህንን "1.0.1" ወዘተ እያልክ ትቀይረዋለህ)
 const String APP_VERSION = "1.0.0";
 
 void main() async {
@@ -71,7 +70,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
     checkRegistration();
   }
 
-  Future<void> checkRegistration() async {
+  Future checkRegistration() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       bool localRegistered = prefs.getBool('local_registered') ?? false;
@@ -140,7 +139,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String selectedStream = 'Natural';
   bool isSaving = false;
 
-  Future<void> registerUser() async {
+  Future registerUser() async {
     if (nameCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("እባክዎ ሙሉ ስምዎን ያስገቡ!"), backgroundColor: Colors.red));
       return;
@@ -227,11 +226,11 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     super.initState();
     appStatus = widget.initialStatus;
     _loadUserData();
-    _checkAppUpdate(); // አፑ ሲከፈት መጀመሪያ አፕዴት ቼክ ያደርጋል
+    _checkAppUpdate(); 
     _checkBroadcast(); 
   }
 
-  Future<void> _loadUserData() async {
+  Future _loadUserData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     setState(() { 
       userShortId = prefs.getInt('local_short_id') ?? 0; 
@@ -239,20 +238,19 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     });
   }
 
-  // 1. AUTO-UPDATE CHECKER SYSTEM
-  Future<void> _checkAppUpdate() async {
+  Future _checkAppUpdate() async {
     try {
       final snapshot = await FirebaseDatabase.instance.ref("admin_settings/update").get();
       if (snapshot.exists) {
         Map data = snapshot.value as Map;
         String latestVersion = data['version'] ?? APP_VERSION;
-        String updateUrl = data['url'] ?? 'https://t.me/ADDIS_REMEDIAL'; // የቴሌግራም ቻናልህ
+        String updateUrl = data['url'] ?? 'https://t.me/ADDIS_REMEDIAL';
 
         if (latestVersion != APP_VERSION) {
           if (mounted) {
             showDialog(
               context: context,
-              barrierDismissible: false, // በግድ አፕዴት እንዲያደርግ (መዝጋት አይችልም)
+              barrierDismissible: false,
               builder: (context) => AlertDialog(
                 backgroundColor: const Color(0xFF2C2C2C),
                 title: const Row(children: [Icon(Icons.system_update, color: Colors.greenAccent), SizedBox(width:10), Text("አዲስ Update አለ!", style: TextStyle(color: Colors.white))]),
@@ -273,7 +271,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (e) {}
   }
 
-  Future<void> _checkBroadcast() async {
+  Future _checkBroadcast() async {
     try {
       final snapshot = await FirebaseDatabase.instance.ref("announcement").get();
       if (snapshot.exists) {
@@ -306,7 +304,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (e) {}
   }
 
-  Future<void> refreshStatus() async {
+  Future refreshStatus() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String deviceId = prefs.getString('device_id') ?? '';
     try {
@@ -526,11 +524,7 @@ class HomeContent extends StatelessWidget {
               _buildGridItem(context, "📖 Remedial Exams", Icons.school, Colors.teal.shade600, !isVIP, () { if (!isVIP) _showPremiumDialog(context); else Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'remedial_exams', title: 'Remedial Exams'))); }),
               _buildGridItem(context, "🧠 Exam Trainer", Icons.psychology, Colors.purple.shade500, !isVIP, () { if (!isVIP) _showPremiumDialog(context); else Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'trainer', year: '2018', title: 'Exam Trainer'))); }),
               _buildGridItem(context, "📝 Quizzes", Icons.quiz, Colors.orange.shade600, !isVIP, () { if (!isVIP) _showPremiumDialog(context); else Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'quizzes', year: '2018', title: 'Quizzes'))); }),
-              
-              // 3. አዲሱ Sample Notes & Video በተን
               _buildGridItem(context, "📚 Sample Notes & Videos", Icons.play_lesson, Colors.redAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SampleMaterialsScreen()))),
-              
-              // 2. የተሻሻለው Study Tips በተን
               _buildGridItem(context, "💡 Study Tips", Icons.lightbulb, Colors.pink.shade600, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StudyTipsScreen()))),
             ],
           ),
@@ -603,25 +597,22 @@ class ProfileContent extends StatelessWidget {
   }
 }
 
-// -------------------------------------------------------------
-// USER SCREENS: Dynamic Study Tips & Sample Materials
-// -------------------------------------------------------------
 class StudyTipsScreen extends StatefulWidget {
   const StudyTipsScreen({Key? key}) : super(key: key);
   @override
   _StudyTipsScreenState createState() => _StudyTipsScreenState();
 }
 class _StudyTipsScreenState extends State<StudyTipsScreen> {
-  List> tips = [];
+  var tips = [];
   bool isLoading = true;
 
   @override
   void initState() { super.initState(); fetchTips(); }
-  Future<void> fetchTips() async {
+  Future fetchTips() async {
     try {
       final snap = await FirebaseDatabase.instance.ref("admin_content/study_tips").get();
       if (snap.exists) {
-        List> temp = [];
+        var temp = [];
         (snap.value as Map).forEach((k, v) => temp.add(Map.from(v)));
         temp.sort((a, b) => (b['time'] ?? 0).compareTo(a['time'] ?? 0));
         if (mounted) setState(() { tips = temp; isLoading = false; });
@@ -648,16 +639,16 @@ class SampleMaterialsScreen extends StatefulWidget {
   _SampleMaterialsScreenState createState() => _SampleMaterialsScreenState();
 }
 class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
-  List> materials = [];
+  var materials = [];
   bool isLoading = true;
 
   @override
   void initState() { super.initState(); fetchMaterials(); }
-  Future<void> fetchMaterials() async {
+  Future fetchMaterials() async {
     try {
       final snap = await FirebaseDatabase.instance.ref("admin_content/sample_materials").get();
       if (snap.exists) {
-        List> temp = [];
+        var temp = [];
         (snap.value as Map).forEach((k, v) => temp.add(Map.from(v)));
         temp.sort((a, b) => (b['time'] ?? 0).compareTo(a['time'] ?? 0));
         if (mounted) setState(() { materials = temp; isLoading = false; });
@@ -691,9 +682,6 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
   }
 }
 
-// -------------------------------------------------------------
-// ADMIN DASHBOARD & FEATURES
-// -------------------------------------------------------------
 class AdminDashboardScreen extends StatelessWidget {
   const AdminDashboardScreen({Key? key}) : super(key: key);
 
@@ -719,7 +707,6 @@ class AdminDashboardScreen extends StatelessWidget {
   }
 }
 
-// አዲስ: Content Manager (Study Tips & Materials)
 class AdminContentScreen extends StatelessWidget {
   const AdminContentScreen({Key? key}) : super(key: key);
   @override
@@ -795,7 +782,6 @@ class AdminContentScreen extends StatelessWidget {
   }
 }
 
-// አዲስ: Update App Sender
 class AdminUpdateAppScreen extends StatelessWidget {
   const AdminUpdateAppScreen({Key? key}) : super(key: key);
   @override
@@ -831,19 +817,19 @@ class AdminStudentListScreen extends StatefulWidget {
   _AdminStudentListScreenState createState() => _AdminStudentListScreenState();
 }
 class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
-  List> allStudents = [];
-  List> displayedStudents = [];
+  var allStudents = [];
+  var displayedStudents = [];
   bool isLoading = true;
   String currentFilter = 'All';
 
   @override
   void initState() { super.initState(); fetchStudents(); }
-  Future<void> fetchStudents() async {
+  Future fetchStudents() async {
     try {
       final snap = await FirebaseDatabase.instance.ref("students").get();
       if (snap.exists) {
-        List> temp = [];
-        (snap.value as Map).forEach((k, v) { Map<dynamic, dynamic> st = Map.from(v); st['device_id'] = k; temp.add(st); });
+        var temp = [];
+        (snap.value as Map).forEach((k, v) { Map st = Map.from(v); st['device_id'] = k; temp.add(st); });
         if (mounted) setState(() { allStudents = temp; _applyFilter(); isLoading = false; });
       } else { if (mounted) setState(() => isLoading = false); }
     } catch (e) { if (mounted) setState(() => isLoading = false); }
@@ -852,7 +838,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
     if (currentFilter == 'All') displayedStudents = List.from(allStudents);
     else displayedStudents = allStudents.where((s) => s['status'].toString().toLowerCase() == currentFilter.toLowerCase()).toList();
   }
-  Future<void> toggleBanStatus(String deviceId, String currentStatus) async {
+  Future toggleBanStatus(String deviceId, String currentStatus) async {
     String newStatus = (currentStatus == 'blocked') ? 'free' : 'blocked';
     try {
       await FirebaseDatabase.instance.ref("students/$deviceId").update({"status": newStatus});
@@ -895,20 +881,20 @@ class AdminReceiptsScreen extends StatefulWidget {
   _AdminReceiptsScreenState createState() => _AdminReceiptsScreenState();
 }
 class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
-  List> pendingStudents = [];
+  var pendingStudents = [];
   bool isLoading = true;
 
   @override
   void initState() { super.initState(); fetchReceipts(); }
-  Future<void> fetchReceipts() async {
+  Future fetchReceipts() async {
     try {
       final snap = await FirebaseDatabase.instance.ref("students").get();
-      List> temp = [];
-      if (snap.exists) { (snap.value as Map).forEach((k, v) { if (v['status'] == 'pending' && v['receipt'] != null) { Map<dynamic, dynamic> s = Map.from(v); s['device_id'] = k; temp.add(s); } }); }
+      var temp = [];
+      if (snap.exists) { (snap.value as Map).forEach((k, v) { if (v['status'] == 'pending' && v['receipt'] != null) { Map s = Map.from(v); s['device_id'] = k; temp.add(s); } }); }
       if (mounted) setState(() { pendingStudents = temp; isLoading = false; });
     } catch (e) { if (mounted) setState(() => isLoading = false); }
   }
-  Future<void> decideReceipt(String deviceId, String decision) async {
+  Future decideReceipt(String deviceId, String decision) async {
     try { await FirebaseDatabase.instance.ref("students/$deviceId").update({"status": decision}); fetchReceipts(); } catch (e) {}
   }
   @override
@@ -946,7 +932,7 @@ class _AdminBroadcastScreenState extends State<AdminBroadcastScreen> {
   final TextEditingController msgCtrl = TextEditingController();
   bool isSending = false;
 
-  Future<void> sendBroadcast() async {
+  Future sendBroadcast() async {
     if (titleCtrl.text.isEmpty || msgCtrl.text.isEmpty) return;
     setState(() => isSending = true);
     try {
@@ -972,24 +958,21 @@ class _AdminBroadcastScreenState extends State<AdminBroadcastScreen> {
   }
 }
 
-// -------------------------------------------------------------
-// USER QUIZ & LEADERBOARD (Dynamic)
-// -------------------------------------------------------------
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({Key? key}) : super(key: key);
   @override
   _LeaderboardScreenState createState() => _LeaderboardScreenState();
 }
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
-  List> topUsers = [];
+  var topUsers = [];
   bool isLoading = true;
 
   @override
   void initState() { super.initState(); fetchLeaderboard(); }
-  Future<void> fetchLeaderboard() async {
+  Future fetchLeaderboard() async {
     try {
       final snap = await FirebaseDatabase.instance.ref("leaderboard").get();
-      List> temp = [];
+      var temp = [];
       if (snap.exists) {
         (snap.value as Map).forEach((k, v) { temp.add(Map.from(v)); });
         temp.sort((a, b) => (b['score'] as int).compareTo(a['score'] as int));
@@ -1028,7 +1011,7 @@ class QuizScreen extends StatefulWidget {
   _QuizScreenState createState() => _QuizScreenState();
 }
 class _QuizScreenState extends State<QuizScreen> {
-  List<dynamic> questions = []; List<int?> userAnswers = [];
+  var questions = []; var userAnswers = [];
   int currentQuestionIndex = 0; int score = 0;
   bool showExplanation = false; int? selectedOptionIndex;
   bool isLoading = true; bool hasError = false;
@@ -1046,7 +1029,7 @@ class _QuizScreenState extends State<QuizScreen> {
       else { timer.cancel(); if (mounted) showCompletionDialog(isTimeUp: true); }
     });
   }
-  Future<void> loadLocalQuestions() async {
+  Future loadLocalQuestions() async {
     try {
       final jsonString = await rootBundle.loadString('assets/questions.json');
       final parsed = jsonDecode(jsonString);
@@ -1054,7 +1037,7 @@ class _QuizScreenState extends State<QuizScreen> {
         setState(() {
           String targetType = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? 'model_exams' : widget.examType;
           String targetYear = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? '2018' : widget.year;
-          List<dynamic> rawList = [];
+          var rawList = [];
           if (parsed is Map && parsed[targetType] != null && parsed[targetType][targetYear] != null) {
             var yearData = parsed[targetType][targetYear];
             if (yearData[widget.subject] != null) rawList = List.from(yearData[widget.subject]);
@@ -1084,7 +1067,7 @@ class _QuizScreenState extends State<QuizScreen> {
       else { _timer?.cancel(); _submitScoreToLeaderboard(); showCompletionDialog(isTimeUp: false); }
     });
   }
-  Future<void> _submitScoreToLeaderboard() async {
+  Future _submitScoreToLeaderboard() async {
     if (score == 0) return;
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -1118,7 +1101,7 @@ class _QuizScreenState extends State<QuizScreen> {
       ),
     );
   }
-  List<String> parseOptions(dynamic qData) {
+  List parseOptions(dynamic qData) {
     if (qData is Map && qData['options'] != null) {
       var opts = qData['options'];
       if (opts is List) return opts.map((e) => e?.toString() ?? "").toList();
@@ -1132,7 +1115,7 @@ class _QuizScreenState extends State<QuizScreen> {
     if (hasError || questions.isEmpty) return Scaffold(appBar: AppBar(title: Text(widget.subject)), body: const Center(child: Text("ጥያቄዎች አልተገኙም!")));
 
     var currentQ = questions[currentQuestionIndex];
-    List<String> options = parseOptions(currentQ);
+    var options = parseOptions(currentQ);
     int m = _remainingSeconds ~/ 60; int s = _remainingSeconds % 60;
     String timeStr = '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
 
@@ -1170,9 +1153,9 @@ class _QuizScreenState extends State<QuizScreen> {
 }
 
 class QuizReviewScreen extends StatelessWidget {
-  final List<dynamic> questions; final List<int?> userAnswers; final String subject;
+  final List questions; final List userAnswers; final String subject;
   const QuizReviewScreen({Key? key, required this.questions, required this.userAnswers, required this.subject}) : super(key: key);
-  List<String> parseOptions(dynamic qData) {
+  List parseOptions(dynamic qData) {
     if (qData is Map && qData['options'] != null) {
       var opts = qData['options'];
       if (opts is List) return opts.map((e) => e?.toString() ?? "").toList();
@@ -1187,7 +1170,7 @@ class QuizReviewScreen extends StatelessWidget {
       body: ListView.builder(
         padding: const EdgeInsets.all(12), itemCount: questions.length,
         itemBuilder: (context, index) {
-          var q = questions[index]; List<String> opts = parseOptions(q);
+          var q = questions[index]; var opts = parseOptions(q);
           int correctId = int.tryParse(q['correct_option_id']?.toString() ?? '0') ?? 0;
           int? userId = userAnswers[index]; bool isCorrect = correctId == userId;
           return Card(
