@@ -39,10 +39,10 @@ jobs:
         run: |
           find app_build/android/app -type f -exec sed -i 's/flutter.minSdkVersion/23/g' {} +
           find app_build/android/app -type f -exec sed -i 's/flutter.minSdk/23/g' {} +
-          find app_build/android/app -type f -exec sed -i 's/flutter.targetSdkVersion/34/g' {} +
-          find app_build/android/app -type f -exec sed -i 's/flutter.targetSdk/34/g' {} +
-          find app_build/android/app -type f -exec sed -i 's/flutter.compileSdkVersion/34/g' {} +
-          find app_build/android/app -type f -exec sed -i 's/flutter.compileSdk/34/g' {} +
+          find app_build/android/app -type f -exec sed -i 's/flutter.targetSdkVersion/36/g' {} +
+          find app_build/android/app -type f -exec sed -i 's/flutter.targetSdk/36/g' {} +
+          find app_build/android/app -type f -exec sed -i 's/flutter.compileSdkVersion/36/g' {} +
+          find app_build/android/app -type f -exec sed -i 's/flutter.compileSdk/36/g' {} +
 
       - name: Add Internet Permission
         run: |
