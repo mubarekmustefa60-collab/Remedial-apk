@@ -10,13 +10,12 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.2
-  url_launcher: ^6.2.6
-  shared_preferences: ^2.2.2
-  firebase_core: ^2.30.0
-  firebase_database: ^10.5.0
-  image_picker: ^1.0.4
+  url_launcher: 6.1.14
+  shared_preferences: 2.2.1
+  firebase_core: 2.24.2
+  firebase_database: 10.3.8
+  image_picker: 0.8.9
 
-# ሎጎውን የሚቀይረው ፕለጊን
 dev_dependencies:
   flutter_launcher_icons: "^0.13.1"
 
