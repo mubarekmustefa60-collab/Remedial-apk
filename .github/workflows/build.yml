@@ -44,6 +44,11 @@ jobs:
           sed -i 's/flutter.targetSdkVersion/36/g' app_build/android/app/build.gradle || true
           sed -i 's/flutter.minSdkVersion/23/g' app_build/android/app/build.gradle || true
 
+      - name: Update Gradle Properties
+        run: |
+          echo "android.useAndroidX=true" >> app_build/android/gradle.properties
+          echo "android.enableJetifier=true" >> app_build/android/gradle.properties
+          
       - name: Add Internet Permission
         run: |
           sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml || true
