@@ -35,70 +35,14 @@ jobs:
           cp assets/questions.json app_build/assets/questions.json || true
           cp assets/logo.png app_build/assets/logo.png || true
 
-      - name: Hardcode Android SDK Versions
+      - name: Fix Android SDK Versions Safely
         run: |
-          # Create a new build.gradle file with hardcoded versions that we know work
-          cat << 'EOF' > app_build/android/app/build.gradle
-          def localProperties = new Properties()
-          def localPropertiesFile = rootProject.file("local.properties")
-          if (localPropertiesFile.exists()) {
-              localPropertiesFile.withReader("UTF-8") { reader ->
-                  localProperties.load(reader)
-              }
-          }
-
-          def flutterVersionCode = localProperties.getProperty("flutter.versionCode")
-          if (flutterVersionCode == null) {
-              flutterVersionCode = "1"
-          }
-
-          def flutterVersionName = localProperties.getProperty("flutter.versionName")
-          if (flutterVersionName == null) {
-              flutterVersionName = "1.0"
-          }
-
-          android {
-              compileSdkVersion 36
-
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_1_8
-                  targetCompatibility JavaVersion.VERSION_1_8
-              }
-
-              kotlinOptions {
-                  jvmTarget = '1.8'
-              }
-
-              sourceSets {
-                  main.java.srcDirs += 'src/main/kotlin'
-              }
-
-              defaultConfig {
-                  applicationId "com.example.app_build"
-                  minSdkVersion 23
-                  targetSdkVersion 36
-                  versionCode flutterVersionCode.toInteger()
-                  versionName flutterVersionName
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.debug
-                  }
-              }
-          }
-
-          flutter {
-              source '../..'
-          }
-
-          dependencies {
-              implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:\$kotlin_version"
-          }
-          EOF
-          
-          # Remove the kts file if it exists so it doesn't conflict
-          rm -f app_build/android/app/build.gradle.kts || true
+          sed -i 's/flutter.compileSdkVersion/36/g' app_build/android/app/build.gradle.kts || true
+          sed -i 's/flutter.targetSdkVersion/36/g' app_build/android/app/build.gradle.kts || true
+          sed -i 's/flutter.minSdkVersion/23/g' app_build/android/app/build.gradle.kts || true
+          sed -i 's/flutter.compileSdkVersion/36/g' app_build/android/app/build.gradle || true
+          sed -i 's/flutter.targetSdkVersion/36/g' app_build/android/app/build.gradle || true
+          sed -i 's/flutter.minSdkVersion/23/g' app_build/android/app/build.gradle || true
 
       - name: Add Internet Permission
         run: |
