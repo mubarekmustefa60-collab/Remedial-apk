@@ -79,12 +79,14 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
       if (localRegistered && deviceId.isNotEmpty) {
         try {
-          final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get();
+          final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get().timeout(const Duration(seconds: 5));
           if (snapshot.exists) {
             localStatus = snapshot.value.toString();
             await prefs.setString('local_status', localStatus);
           }
-        } catch (_) {}
+        } catch (_) {
+          debugPrint("Offline mode - using cached VIP status.");
+        }
       }
       if (mounted) {
         setState(() {
@@ -191,8 +193,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             const Text("የጥናት መስመር (Stream):", style: TextStyle(fontSize: 16, color: Colors.white70)),
             Row(
               children: [
-                Expanded(child: RadioListTile<String>(title: const Text("Natural"), value: "Natural", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val!))),
-                Expanded(child: RadioListTile<String>(title: const Text("Social"), value: "Social", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val!))),
+                Expanded(child: RadioListTile(title: const Text("Natural"), value: "Natural", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
+                Expanded(child: RadioListTile(title: const Text("Social"), value: "Social", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
               ],
             ),
             const SizedBox(height: 30),
@@ -308,7 +310,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String deviceId = prefs.getString('device_id') ?? '';
     try {
-      final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get();
+      final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get().timeout(const Duration(seconds: 5));
       if (snapshot.exists) {
         String newStatus = snapshot.value.toString();
         await prefs.setString('local_status', newStatus);
@@ -603,7 +605,7 @@ class StudyTipsScreen extends StatefulWidget {
   _StudyTipsScreenState createState() => _StudyTipsScreenState();
 }
 class _StudyTipsScreenState extends State<StudyTipsScreen> {
-  var tips = [];
+  List tips = [];
   bool isLoading = true;
 
   @override
@@ -612,7 +614,7 @@ class _StudyTipsScreenState extends State<StudyTipsScreen> {
     try {
       final snap = await FirebaseDatabase.instance.ref("admin_content/study_tips").get();
       if (snap.exists) {
-        var temp = [];
+        List temp = [];
         (snap.value as Map).forEach((k, v) => temp.add(Map.from(v)));
         temp.sort((a, b) => (b['time'] ?? 0).compareTo(a['time'] ?? 0));
         if (mounted) setState(() { tips = temp; isLoading = false; });
@@ -639,7 +641,7 @@ class SampleMaterialsScreen extends StatefulWidget {
   _SampleMaterialsScreenState createState() => _SampleMaterialsScreenState();
 }
 class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
-  var materials = [];
+  List materials = [];
   bool isLoading = true;
 
   @override
@@ -648,7 +650,7 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
     try {
       final snap = await FirebaseDatabase.instance.ref("admin_content/sample_materials").get();
       if (snap.exists) {
-        var temp = [];
+        List temp = [];
         (snap.value as Map).forEach((k, v) => temp.add(Map.from(v)));
         temp.sort((a, b) => (b['time'] ?? 0).compareTo(a['time'] ?? 0));
         if (mounted) setState(() { materials = temp; isLoading = false; });
@@ -762,10 +764,10 @@ class AdminContentScreen extends StatelessWidget {
           const SizedBox(height: 10),
           TextField(controller: urlCtrl, decoration: const InputDecoration(hintText: "የቪዲዮ ወይም የፋይል ሊንክ (URL)")),
           const SizedBox(height: 10),
-          DropdownButton<String>(
+          DropdownButton(
             value: mType, dropdownColor: Colors.black,
             items: const [DropdownMenuItem(value: 'video', child: Text("🎥 Video")), DropdownMenuItem(value: 'pdf', child: Text("📄 PDF / Note"))],
-            onChanged: (val) => setStateDialog(() => mType = val!),
+            onChanged: (val) => setStateDialog(() => mType = val.toString()),
           )
         ]),
         actions: [
@@ -817,8 +819,8 @@ class AdminStudentListScreen extends StatefulWidget {
   _AdminStudentListScreenState createState() => _AdminStudentListScreenState();
 }
 class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
-  var allStudents = [];
-  var displayedStudents = [];
+  List allStudents = [];
+  List displayedStudents = [];
   bool isLoading = true;
   String currentFilter = 'All';
 
@@ -828,7 +830,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
     try {
       final snap = await FirebaseDatabase.instance.ref("students").get();
       if (snap.exists) {
-        var temp = [];
+        List temp = [];
         (snap.value as Map).forEach((k, v) { Map st = Map.from(v); st['device_id'] = k; temp.add(st); });
         if (mounted) setState(() { allStudents = temp; _applyFilter(); isLoading = false; });
       } else { if (mounted) setState(() => isLoading = false); }
@@ -850,7 +852,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("ተማሪዎች"), actions: [
-        PopupMenuButton<String>(icon: const Icon(Icons.filter_list), onSelected: (val) { setState(() { currentFilter = val; _applyFilter(); }); }, itemBuilder: (context) => ['All', 'VIP', 'Free', 'Blocked'].map((e) => PopupMenuItem(value: e, child: Text(e))).toList())
+        PopupMenuButton(icon: const Icon(Icons.filter_list), onSelected: (val) { setState(() { currentFilter = val.toString(); _applyFilter(); }); }, itemBuilder: (context) => ['All', 'VIP', 'Free', 'Blocked'].map((e) => PopupMenuItem(value: e, child: Text(e))).toList())
       ]),
       body: isLoading ? const Center(child: CircularProgressIndicator()) : displayedStudents.isEmpty 
         ? Center(child: Text("በ '$currentFilter' የተገኘ ተማሪ የለም!")) 
@@ -881,7 +883,7 @@ class AdminReceiptsScreen extends StatefulWidget {
   _AdminReceiptsScreenState createState() => _AdminReceiptsScreenState();
 }
 class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
-  var pendingStudents = [];
+  List pendingStudents = [];
   bool isLoading = true;
 
   @override
@@ -889,7 +891,7 @@ class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
   Future fetchReceipts() async {
     try {
       final snap = await FirebaseDatabase.instance.ref("students").get();
-      var temp = [];
+      List temp = [];
       if (snap.exists) { (snap.value as Map).forEach((k, v) { if (v['status'] == 'pending' && v['receipt'] != null) { Map s = Map.from(v); s['device_id'] = k; temp.add(s); } }); }
       if (mounted) setState(() { pendingStudents = temp; isLoading = false; });
     } catch (e) { if (mounted) setState(() => isLoading = false); }
@@ -964,7 +966,7 @@ class LeaderboardScreen extends StatefulWidget {
   _LeaderboardScreenState createState() => _LeaderboardScreenState();
 }
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
-  var topUsers = [];
+  List topUsers = [];
   bool isLoading = true;
 
   @override
@@ -972,7 +974,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   Future fetchLeaderboard() async {
     try {
       final snap = await FirebaseDatabase.instance.ref("leaderboard").get();
-      var temp = [];
+      List temp = [];
       if (snap.exists) {
         (snap.value as Map).forEach((k, v) { temp.add(Map.from(v)); });
         temp.sort((a, b) => (b['score'] as int).compareTo(a['score'] as int));
@@ -1011,7 +1013,7 @@ class QuizScreen extends StatefulWidget {
   _QuizScreenState createState() => _QuizScreenState();
 }
 class _QuizScreenState extends State<QuizScreen> {
-  var questions = []; var userAnswers = [];
+  List questions = []; List userAnswers = [];
   int currentQuestionIndex = 0; int score = 0;
   bool showExplanation = false; int? selectedOptionIndex;
   bool isLoading = true; bool hasError = false;
@@ -1037,7 +1039,7 @@ class _QuizScreenState extends State<QuizScreen> {
         setState(() {
           String targetType = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? 'model_exams' : widget.examType;
           String targetYear = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? '2018' : widget.year;
-          var rawList = [];
+          List rawList = [];
           if (parsed is Map && parsed[targetType] != null && parsed[targetType][targetYear] != null) {
             var yearData = parsed[targetType][targetYear];
             if (yearData[widget.subject] != null) rawList = List.from(yearData[widget.subject]);
