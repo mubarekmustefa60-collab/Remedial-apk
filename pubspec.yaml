@@ -10,11 +10,11 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.2
-  url_launcher: 6.1.14
-  shared_preferences: 2.2.1
-  firebase_core: 2.24.2
-  firebase_database: 10.3.8
-  image_picker: 0.8.9
+  url_launcher: ^6.3.0
+  shared_preferences: ^2.3.2
+  firebase_core: ^3.6.0
+  firebase_database: ^11.1.5
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_launcher_icons: "^0.13.1"
