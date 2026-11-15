@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch: # አፑን በፈለግከው ሰዓት እራስህ Build እንድታደርግ ይፈቅድልሃል
 
 jobs:
   build:
@@ -34,6 +35,16 @@ jobs:
           mkdir -p app_build/assets
           cp assets/questions.json app_build/assets/questions.json || true
           cp assets/logo.png app_build/assets/logo.png || true
+
+      - name: Fix Android SDK Versions Safely
+        run: |
+          sed -i 's/flutter.compileSdkVersion/36/g' app_build/android/app/build.gradle.kts || true
+          sed -i 's/flutter.targetSdkVersion/36/g' app_build/android/app/build.gradle.kts || true
+          sed -i 's/flutter.minSdkVersion/23/g' app_build/android/app/build.gradle.kts || true
+
+      - name: Add Internet Permission
+        run: |
+          sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml || true
 
       - name: Install dependencies & Generate Logo
         working-directory: ./app_build
