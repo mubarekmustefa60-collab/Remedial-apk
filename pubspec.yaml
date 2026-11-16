@@ -23,7 +23,7 @@ flutter_icons:
   android: "ic_launcher"
   ios: true
   image_path: "assets/logo.png"
-  min_sdk_version: 23
+  min_sdk_version: 21
 
 flutter:
   uses-material-design: true
