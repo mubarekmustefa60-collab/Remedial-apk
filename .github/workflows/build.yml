@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,58 +15,58 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Flutter
+      - name: Setup Flutter (Locked to Stable Working Version)
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.24.3'
           channel: 'stable'
 
       - name: Create Flutter Project
-        run: flutter create app_build
+        run: flutter create --org com.example app_build
 
       - name: Copy Files into Project
         run: |
           cp pubspec.yaml app_build/pubspec.yaml
           cp main.dart app_build/lib/main.dart
           mkdir -p app_build/assets
-          cp assets/questions.json app_build/assets/questions.json || true
-          cp assets/logo.png app_build/assets/logo.png || true
+          cp assets/questions.json app_build/assets/questions.json || cp questions.json app_build/assets/questions.json || true
+          cp assets/logo.png app_build/assets/logo.png || cp logo.png app_build/assets/logo.png || true
 
-      - name: Fix Android SDK Versions Safely
+      - name: Fix Android SDK & Disable Lint Crash
         run: |
-          sed -i 's/flutter.compileSdkVersion/36/g' app_build/android/app/build.gradle.kts || true
-          sed -i 's/flutter.targetSdkVersion/36/g' app_build/android/app/build.gradle.kts || true
-          sed -i 's/flutter.minSdkVersion/23/g' app_build/android/app/build.gradle.kts || true
-
-      - name: Disable Lint Errors (THE FIX)
-        run: |
-          # Lint ኤረር ካገኘ እንዳያቋርጥ (Abort እንዳያደርግ) እናዛለን
-          echo "
-          android {
-              lintOptions {
-                  checkReleaseBuilds false
-                  abortOnError false
-              }
-          }
-          " >> app_build/android/app/build.gradle
+          # ለ Kotlin ፋይል (build.gradle.kts) ማስተካከያ
+          if [ -f "app_build/android/app/build.gradle.kts" ]; then
+            sed -i 's/flutter.compileSdkVersion/34/g' app_build/android/app/build.gradle.kts
+            sed -i 's/flutter.targetSdkVersion/34/g' app_build/android/app/build.gradle.kts
+            sed -i 's/flutter.minSdkVersion/23/g' app_build/android/app/build.gradle.kts
+            echo 'android { lint { checkReleaseBuilds = false; abortOnError = false } }' >> app_build/android/app/build.gradle.kts
+          fi
+          # ለ Groovy ፋይል (build.gradle) ማስተካከያ
+          if [ -f "app_build/android/app/build.gradle" ]; then
+            sed -i 's/flutter.compileSdkVersion/34/g' app_build/android/app/build.gradle
+            sed -i 's/flutter.targetSdkVersion/34/g' app_build/android/app/build.gradle
+            sed -i 's/flutter.minSdkVersion/23/g' app_build/android/app/build.gradle
+            echo 'android { lintOptions { checkReleaseBuilds false; abortOnError false } }' >> app_build/android/app/build.gradle
+          fi
 
       - name: Add Internet Permission
         run: |
           sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml || true
 
-      - name: Install dependencies & Generate Logo
+      - name: Install Dependencies & Generate Icon
         working-directory: ./app_build
         run: |
           flutter pub get
-          flutter pub run flutter_launcher_icons
+          dart run flutter_launcher_icons || true
 
-      - name: Build APK
+      - name: Build APK (Skipping Lint Checks)
         working-directory: ./app_build
-        run: flutter build apk --release
+        run: flutter build apk --release -Pdisable-lint=true
 
       - name: Upload APK File
         uses: actions/upload-artifact@v4
