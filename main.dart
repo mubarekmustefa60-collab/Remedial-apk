@@ -12,6 +12,9 @@ import 'package:firebase_database/firebase_database.dart';
 
 const String APP_VERSION = "1.0.0";
 
+// የአንተ የግል አድሚን መለያ (ሌላ ሰው ፓስወርዱን ቢያውቀው እንኳ እንዳይገባ ይከለክላል)
+const int OWNER_ADMIN_ID = 5053;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
@@ -81,8 +84,13 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         try {
           final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get().timeout(const Duration(seconds: 5));
           if (snapshot.exists) {
-            localStatus = snapshot.value.toString();
-            await prefs.setString('local_status', localStatus);
+            String remoteStatus = snapshot.value.toString();
+            if (localStatus == 'vip' && remoteStatus != 'blocked') {
+              localStatus = 'vip';
+            } else {
+              localStatus = remoteStatus;
+              await prefs.setString('local_status', localStatus);
+            }
           }
         } catch (_) {
           debugPrint("Offline mode - using cached VIP status.");
@@ -159,14 +167,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await prefs.setInt('local_short_id', shortId);
       await prefs.setString('device_id', deviceId);
 
-      DatabaseReference ref = FirebaseDatabase.instance.ref("students/$deviceId");
-      await ref.set({
-        "full_name": nameCtrl.text.trim(),
-        "stream": selectedStream,
-        "status": "free",
-        "short_id": shortId,
-        "registered_at": DateTime.now().toIso8601String(),
-      });
+      try {
+        DatabaseReference ref = FirebaseDatabase.instance.ref("students/$deviceId");
+        await ref.set({
+          "full_name": nameCtrl.text.trim(),
+          "stream": selectedStream,
+          "status": "free",
+          "short_id": shortId,
+          "registered_at": DateTime.now().toIso8601String(),
+        }).timeout(const Duration(seconds: 6));
+      } catch (_) {}
 
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const MainMenuScreen(initialStatus: 'free')), (route) => false);
@@ -309,10 +319,14 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   Future refreshStatus() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String deviceId = prefs.getString('device_id') ?? '';
+    String cachedStatus = prefs.getString('local_status') ?? 'free';
     try {
       final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get().timeout(const Duration(seconds: 5));
       if (snapshot.exists) {
         String newStatus = snapshot.value.toString();
+        if (cachedStatus == 'vip' && newStatus != 'blocked') {
+          newStatus = 'vip';
+        }
         await prefs.setString('local_status', newStatus);
         setState(() => appStatus = newStatus);
         if(newStatus == 'blocked' && mounted) {
@@ -320,14 +334,16 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         }
       }
     } catch (e) {}
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("✅ ስቴተስ: ${appStatus.toUpperCase()}"), backgroundColor: Colors.green));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("✅ ስቴተስ: ${appStatus.toUpperCase()}"), backgroundColor: Colors.green));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     bool isVIP = appStatus == 'vip';
     final List<Widget> pages = [
-      HomeContent(isVIP: isVIP, appStatus: appStatus, userShortId: userShortId, refreshCallback: refreshStatus, onStatusChange: (s) => setState(() => appStatus = s)),
+      HomeContent(isVIP: isVIP, appStatus: appStatus, userShortId: userShortId, userName: userName, refreshCallback: refreshStatus, onStatusChange: (s) => setState(() => appStatus = s)),
       ProfileContent(userName: userName, userShortId: userShortId, appStatus: appStatus),
     ];
     return Scaffold(
@@ -361,10 +377,11 @@ class HomeContent extends StatelessWidget {
   final bool isVIP;
   final String appStatus;
   final int userShortId;
+  final String userName;
   final VoidCallback refreshCallback;
   final Function(String) onStatusChange;
 
-  const HomeContent({Key? key, required this.isVIP, required this.appStatus, required this.userShortId, required this.refreshCallback, required this.onStatusChange}) : super(key: key);
+  const HomeContent({Key? key, required this.isVIP, required this.appStatus, required this.userShortId, required this.userName, required this.refreshCallback, required this.onStatusChange}) : super(key: key);
 
   void _showPremiumDialog(BuildContext context) {
     bool isDialogLoading = false;
@@ -377,47 +394,81 @@ class HomeContent extends StatelessWidget {
       builder: (context) => StatefulBuilder(
         builder: (context, setStateDialog) {
           return AlertDialog(
-            backgroundColor: const Color(0xFF2C2C2C),
-            title: Row(children: const [Icon(Icons.lock, color: Colors.amber), SizedBox(width: 10), Text("Premium Access", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))]),
+            backgroundColor: const Color(0xFF222222),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            title: Row(children: const [Icon(Icons.workspace_premium, color: Colors.amber, size: 28), SizedBox(width: 8), Text("Premium Access", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18))]),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (appStatus == 'rejected')
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 10),
+                      child: Text("❌ የላኩት ጥያቄ አልፀደቀም፤ እባክዎ ትክክለኛውን ደረሰኝ ይላኩ።", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+                    ),
+                  const Text(
+                    "ሰላም premium ሆነው አመቱን ሙሉ ከኛ ጋር ለመማር 500 ብር ለ ግማሽ semester ደሞ 300 ብር ከታች ባሉት accounts ያስገቡና send screen shoot ይበሉት ክፍያው ታይቶ ወዲያም premium ትደረጋላቹ",
+                    style: TextStyle(color: Colors.white, fontSize: 14, height: 1.5),
+                  ),
+                  const SizedBox(height: 15),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF161616),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.amber.withOpacity(0.5)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("🏦 CBE = 1000667301673", style: TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        const Text("📱 Telebirr = 0929698365", style: TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        const Text("📲 CBE birr = 0929698365", style: TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
+                        const Divider(color: Colors.white24, height: 16),
+                        const Text("👤 Name: MUBAREK MUSTEFA", style: TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 15),
                   if (appStatus == 'pending') ...[
                     const Center(child: Icon(Icons.hourglass_top, color: Colors.blueAccent, size: 50)),
                     const SizedBox(height: 15),
-                    const Text("⏳ ክፍያዎ እየታየ ነው! እባክዎ በትዕግስት ይጠብቁ።", style: TextStyle(color: Colors.white, fontSize: 16), textAlign: TextAlign.center),
-                  ] 
-                  else ...[
-                    if (appStatus == 'rejected')
-                      const Padding(padding: EdgeInsets.only(bottom: 10), child: Text("❌ የላኩት ደረሰኝ አልፀደቀም፤ እባክዎ እንደገና ይሞክሩ።", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold))),
-                    const Text("1️⃣ CBE: 1000667301673 | TELEBIRR: 0929698365 (Mubarek Mustefa) - 300 ብር ይክፈሉ።", style: TextStyle(color: Colors.amber, fontSize: 13)),
-                    const SizedBox(height: 10),
+                    const Text("⏳ ደረሰኝዎ እየታየ ነው! እባክዎ በትዕግስት ይጠብቁ።", style: TextStyle(color: Colors.white, fontSize: 15), textAlign: TextAlign.center),
+                  ] else ...[
                     Center(
                       child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade700),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade800, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
                         onPressed: () async {
                           final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 30);
                           if (image != null) { setStateDialog(() { selectedImage = File(image.path); }); }
                         },
                         icon: const Icon(Icons.image, color: Colors.white),
-                        label: Text(selectedImage == null ? "ደረሰኝ ምረጥ (Attach)" : "✅ ፎቶ ተመርጧል", style: const TextStyle(color: Colors.white)),
+                        label: Text(selectedImage == null ? "ደረሰኝ ምረጥ (Attach)" : "✅ ፎቶ ተመርጧል", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                       ),
                     ),
                     if (selectedImage != null)
-                       Padding(padding: const EdgeInsets.only(top: 10), child: ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.file(selectedImage!, height: 100, width: double.infinity, fit: BoxFit.cover))),
-                  ],
+                       Padding(padding: const EdgeInsets.only(top: 10), child: ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.file(selectedImage!, height: 120, width: double.infinity, fit: BoxFit.cover))),
+                  ]
                 ],
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(context), child: Text(appStatus == 'pending' ? "ዝጋ" : "Cancel")),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("ዝጋ (Close)", style: TextStyle(color: Colors.white70)),
+              ),
               if (appStatus != 'pending')
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700, padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10)),
                   onPressed: isDialogLoading ? null : () async {
-                    if (selectedImage == null) return;
+                    if (selectedImage == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("እባክዎ መጀመሪያ ደረሰኝ ይምረጡ!"), backgroundColor: Colors.red));
+                      return;
+                    }
                     setStateDialog(() => isDialogLoading = true);
                     try {
                       SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -428,11 +479,16 @@ class HomeContent extends StatelessWidget {
                       if (context.mounted) {
                         Navigator.pop(context);
                         onStatusChange('pending');
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ ደረሰኝዎ ተልኳል!")));
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ ደረሰኝዎ ተልኳል! ክፍያው ሲታይ VIP ይደረጋሉ።")));
                       }
-                    } catch (e) { setStateDialog(() => isDialogLoading = false); }
+                    } catch (e) {
+                      setStateDialog(() => isDialogLoading = false);
+                    }
                   },
-                  child: isDialogLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("Send Receipt", style: TextStyle(color: Colors.white)),
+                  icon: const Icon(Icons.send, color: Colors.black, size: 18),
+                  label: isDialogLoading 
+                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2))
+                    : const Text("Send Screen Shoot", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                 ),
             ],
           );
@@ -461,11 +517,19 @@ class HomeContent extends StatelessWidget {
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           ElevatedButton(
             onPressed: () async {
+              String input = pwdCtrl.text.trim();
               int expectedVipCode = userShortId * 3;
-              if (pwdCtrl.text == "Matrix@2026") {
-                Navigator.pop(context);
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen()));
-              } else if (pwdCtrl.text == expectedVipCode.toString()) {
+
+              bool isOwnerDevice = (userShortId == OWNER_ADMIN_ID) || (userName.toLowerCase().trim() == "mubarek mustefa");
+
+              if (input == "Matrix@2026") {
+                if (isOwnerDevice) {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen()));
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("⛔ ይህ የአድሚን መቆጣጠሪያ ለአፕሊኬሽኑ ባለቤት ብቻ የተፈቀደ ነው!"), backgroundColor: Colors.red));
+                }
+              } else if (input == expectedVipCode.toString()) {
                 SharedPreferences prefs = await SharedPreferences.getInstance();
                 String deviceId = prefs.getString('device_id') ?? '';
                 await prefs.setString('local_status', 'vip');
@@ -697,7 +761,7 @@ class AdminDashboardScreen extends StatelessWidget {
           children: [
             ElevatedButton.icon(style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.amber, minimumSize: const Size(double.infinity, 50)), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminReceiptsScreen())); }, icon: const Icon(Icons.receipt_long, color: Colors.black), label: const Text("📥 አዲስ ደረሰኞችን አረጋግጥ", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
             const SizedBox(height: 15),
-            ElevatedButton.icon(style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.blueAccent, minimumSize: const Size(double.infinity, 50)), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminStudentListScreen())); }, icon: const Icon(Icons.group, color: Colors.white), label: const Text("👥 የተመዘገቡ ተማሪዎች (Filter/Ban)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+            ElevatedButton.icon(style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.blueAccent, minimumSize: const Size(double.infinity, 50)), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminStudentListScreen())); }, icon: const Icon(Icons.group, color: Colors.white), label: const Text("👥 የተመዘገቡ ተማሪዎች (Filter/Ban/VIP)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
             const SizedBox(height: 15),
             ElevatedButton.icon(style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.green, minimumSize: const Size(double.infinity, 50)), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminContentScreen())); }, icon: const Icon(Icons.edit_document, color: Colors.white), label: const Text("✍️ ኮንቴንት አስተካክል (Tips & Materials)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
             const SizedBox(height: 15),
@@ -840,19 +904,18 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
     if (currentFilter == 'All') displayedStudents = List.from(allStudents);
     else displayedStudents = allStudents.where((s) => s['status'].toString().toLowerCase() == currentFilter.toLowerCase()).toList();
   }
-  Future toggleBanStatus(String deviceId, String currentStatus) async {
-    String newStatus = (currentStatus == 'blocked') ? 'free' : 'blocked';
+  Future updateStudentStatus(String deviceId, String newStatus) async {
     try {
       await FirebaseDatabase.instance.ref("students/$deviceId").update({"status": newStatus});
       fetchStudents();
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(newStatus == 'blocked' ? "ተማሪው ታግዷል!" : "እግዱ ተነስቷል")));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("ስቴተስ ወደ $newStatus ተቀይሯል!")));
     } catch(e){}
   }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("ተማሪዎች"), actions: [
-        PopupMenuButton(icon: const Icon(Icons.filter_list), onSelected: (val) { setState(() { currentFilter = val.toString(); _applyFilter(); }); }, itemBuilder: (context) => ['All', 'VIP', 'Free', 'Blocked'].map((e) => PopupMenuItem(value: e, child: Text(e))).toList())
+        PopupMenuButton(icon: const Icon(Icons.filter_list), onSelected: (val) { setState(() { currentFilter = val.toString(); _applyFilter(); }); }, itemBuilder: (context) => ['All', 'VIP', 'Pending', 'Free', 'Blocked'].map((e) => PopupMenuItem(value: e, child: Text(e))).toList())
       ]),
       body: isLoading ? const Center(child: CircularProgressIndicator()) : displayedStudents.isEmpty 
         ? Center(child: Text("በ '$currentFilter' የተገኘ ተማሪ የለም!")) 
@@ -867,8 +930,15 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
                 child: ListTile(
                   leading: CircleAvatar(backgroundColor: isBlocked ? Colors.red : (isVip ? Colors.amber : Colors.blueGrey), child: Icon(isBlocked ? Icons.block : Icons.person, color: Colors.white)),
                   title: Text(s['full_name'] ?? 'Unknown', style: TextStyle(color: isBlocked ? Colors.redAccent : Colors.white, fontWeight: FontWeight.bold, decoration: isBlocked ? TextDecoration.lineThrough : null)),
-                  subtitle: Text("ID: ${s['short_id']} | Status: ${s['status']}", style: const TextStyle(color: Colors.white70)),
-                  trailing: IconButton(icon: Icon(isBlocked ? Icons.lock_open : Icons.block, color: isBlocked ? Colors.green : Colors.red), onPressed: () => toggleBanStatus(s['device_id'], s['status'])),
+                  subtitle: Text("ID: ${s['short_id']} | Code: ${(s['short_id'] ?? 0) * 3}\nStatus: ${s['status']}", style: const TextStyle(color: Colors.white70)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!isVip)
+                        IconButton(icon: const Icon(Icons.verified, color: Colors.amber), tooltip: "Make VIP", onPressed: () => updateStudentStatus(s['device_id'], 'vip')),
+                      IconButton(icon: Icon(isBlocked ? Icons.lock_open : Icons.block, color: isBlocked ? Colors.green : Colors.red), onPressed: () => updateStudentStatus(s['device_id'], isBlocked ? 'free' : 'blocked')),
+                    ],
+                  ),
                 ),
               );
             },
@@ -892,7 +962,15 @@ class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
     try {
       final snap = await FirebaseDatabase.instance.ref("students").get();
       List temp = [];
-      if (snap.exists) { (snap.value as Map).forEach((k, v) { if (v['status'] == 'pending' && v['receipt'] != null) { Map s = Map.from(v); s['device_id'] = k; temp.add(s); } }); }
+      if (snap.exists) {
+        (snap.value as Map).forEach((k, v) {
+          if (v['status'] == 'pending') {
+            Map s = Map.from(v);
+            s['device_id'] = k;
+            temp.add(s);
+          }
+        });
+      }
       if (mounted) setState(() { pendingStudents = temp; isLoading = false; });
     } catch (e) { if (mounted) setState(() => isLoading = false); }
   }
@@ -902,21 +980,34 @@ class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("📥 Pending Receipts")),
-      body: isLoading ? const Center(child: CircularProgressIndicator()) : pendingStudents.isEmpty ? const Center(child: Text("ምንም ደረሰኝ የለም!")) : ListView.builder(
+      appBar: AppBar(title: const Text("📥 Pending VIP Requests")),
+      body: isLoading ? const Center(child: CircularProgressIndicator()) : pendingStudents.isEmpty ? const Center(child: Text("ምንም አዲስ ጥያቄ የለም!")) : ListView.builder(
         itemCount: pendingStudents.length,
         itemBuilder: (c, i) {
           var s = pendingStudents[i];
+          int id = s['short_id'] ?? 0;
           return Card(
             margin: const EdgeInsets.all(10), color: const Color(0xFF2C2C2C),
-            child: Column(children: [
-              Padding(padding: const EdgeInsets.all(8), child: Text("ስም: ${s['full_name']}", style: const TextStyle(color: Colors.greenAccent))),
-              s['receipt'] != null ? Image.memory(base64Decode(s['receipt']), height: 300, fit: BoxFit.cover) : const SizedBox(),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: () => decideReceipt(s['device_id'], 'rejected'), child: const Text("Decline")),
-                ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: () => decideReceipt(s['device_id'], 'vip'), child: const Text("Approve")),
-              ])
-            ]),
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(children: [
+                Text("👤 ስም: ${s['full_name']}", style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text("🆔 ID: $id   |   🔑 VIP Code: ${id * 3}", style: const TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                if (s['receipt'] != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12.0),
+                    child: ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(base64Decode(s['receipt']), height: 300, width: double.infinity, fit: BoxFit.cover)),
+                  )
+                else
+                  const Padding(padding: EdgeInsets.only(bottom: 12.0), child: Text("ደረሰኝ ፎቶ አልተላከም፤ በቴሌግራም ቼክ አድርግ", style: TextStyle(color: Colors.amber))),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                  ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: () => decideReceipt(s['device_id'], 'rejected'), icon: const Icon(Icons.close, color: Colors.white), label: const Text("Decline", style: TextStyle(color: Colors.white))),
+                  ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: () => decideReceipt(s['device_id'], 'vip'), icon: const Icon(Icons.check, color: Colors.white), label: const Text("Approve VIP", style: TextStyle(color: Colors.white))),
+                ])
+              ]),
+            ),
           );
         },
       ),
