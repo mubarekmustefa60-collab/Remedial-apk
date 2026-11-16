@@ -472,7 +472,7 @@ class HomeContent extends StatelessWidget {
                 try { await FirebaseDatabase.instance.ref("students/$deviceId").update({"status": "vip"}); } catch(e) {}
                 onStatusChange('vip');
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ አፑ በအောင်မြင်ነት VIP ተደርጓል!"), backgroundColor: Colors.green));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ አፑ በተሳካ ሁኔታ VIP ተደርጓል!"), backgroundColor: Colors.green));
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("❌ ትክክል ያልሆነ መክፈቻ ኮድ!"), backgroundColor: Colors.red));
               }
