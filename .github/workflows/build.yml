@@ -37,21 +37,12 @@ jobs:
           cp assets/questions.json app_build/assets/questions.json || cp questions.json app_build/assets/questions.json || true
           cp assets/logo.png app_build/assets/logo.png || cp logo.png app_build/assets/logo.png || true
 
-      - name: Generate Release Keystore (Reduces Play Protect Warnings)
+      - name: Configure App Name & Seamless Update (API 21+)
         run: |
-          keytool -genkey -v -keystore app_build/android/app/upload-keystore.jks \
-            -keyalg RSA -keysize 2048 -validity 10000 -alias upload \
-            -dname "CN=Mubarek Mustefa, OU=Remedial Matrix, O=Remedial Matrix, L=Addis Ababa, S=AA, C=ET" \
-            -storepass Remedial2026 -keypass Remedial2026
-
-      - name: Configure App Name, Compatibility (API 21+) & Size Reduction
-        run: |
-          # 1. የአፑን ስም ወደ Remedial Matrix መቀየር እና ኢንተርኔት ፈቃድ ብቻ መስጠት
           sed -i 's/android:label="remedial_matrix"/android:label="Remedial Matrix"/g' app_build/android/app/src/main/AndroidManifest.xml || true
           sed -i 's/android:label="app_build"/android:label="Remedial Matrix"/g' app_build/android/app/src/main/AndroidManifest.xml || true
           sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml || true
 
-          # 2. በሁሉም ስልኮች እንዲሰራ (minSdk 21) እና Size እንዲቀንስ ማድረግ
           if [ -f "app_build/android/app/build.gradle" ]; then
             sed -i 's/flutter.compileSdkVersion/34/g' app_build/android/app/build.gradle
             sed -i 's/flutter.targetSdkVersion/34/g' app_build/android/app/build.gradle
@@ -85,28 +76,14 @@ jobs:
           flutter pub get
           dart run flutter_launcher_icons || true
 
-      - name: Build Universal & Compact APKs
+      - name: Build Universal APK (Overwrites Old Version Automatically)
         working-directory: ./app_build
         run: |
-          # 1. ለሁሉም ስልኮች (32-bit እና 64-bit) የሚሆን Universal APK
           flutter build apk --release --tree-shake-icons --target-platform android-arm,android-arm64 -Pdisable-lint=true
           cp build/app/outputs/flutter-apk/app-release.apk ../Remedial_Matrix_Universal.apk
 
-          # 2. በጣም አነስተኛ Size ያለው የተከፋፈለ APK
-          flutter build apk --release --split-per-abi --tree-shake-icons -Pdisable-lint=true
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../Remedial_Matrix_Compact_64bit.apk
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk ../Remedial_Matrix_OldPhones_32bit.apk
-
-      - name: Upload Universal APK (Works on ALL Phones)
+      - name: Upload Universal APK
         uses: actions/upload-artifact@v4
         with:
           name: Remedial-Matrix-Universal-APK
           path: Remedial_Matrix_Universal.apk
-
-      - name: Upload Compact APKs (Smallest Size)
-        uses: actions/upload-artifact@v4
-        with:
-          name: Remedial-Matrix-Compact-APKs
-          path: |
-            Remedial_Matrix_Compact_64bit.apk
-            Remedial_Matrix_OldPhones_32bit.apk
