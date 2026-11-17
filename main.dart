@@ -59,9 +59,9 @@ class RemedialApp extends StatelessWidget {
 }
 
 // ============================================================================
-// 📚 OFFICIAL 2019 REMEDIAL COURSE OUTLINES (FROM MoE SYLLABUS PDFs)
+// 📚 OFFICIAL 2019 REMEDIAL COURSE OUTLINES (SAFE SYNTAX WITHOUT NESTED <>)
 // ============================================================================
-final Map<String, List>> OFFICIAL_COURSE_OUTLINES = {
+const Map officialCourseOutlines = {
   "Mathematics": [
     {"unit": "Unit 1: Further on Sets and the Number System (6 hrs)", "topics": "• Further on sets (Concept, Notion, Operations & Applications)\n• The Number System (Natural, Integers, Rational, Irrational & Real Numbers)"},
     {"unit": "Unit 2: Solving Equations and Inequalities (7 hrs)", "topics": "• Linear Equations in One & Two Variables, Non-linear Equations\n• Linear Inequalities, Absolute Value & Quadratic Inequalities"},
@@ -142,8 +142,7 @@ final Map<String, List>> OFFICIAL_COURSE_OUTLINES = {
   ],
 };
 
-// በየቀኑ የሚጠኑት ዋና ፕሮግራሞች (በ2019 አዲሱ ሲለበስ መሰረት የተደራጁ)
-Map<String, Map<String, String>> getDefaultSchedule() {
+Map getDefaultSchedule() {
   return {
     "Natural": {
       "Monday": "📐 Mathematics: Unit 1 (Sets & Number System) & Unit 2 (Solving Equations and Inequalities)",
@@ -459,7 +458,8 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String stream = prefs.getString('local_stream') ?? 'Natural';
     String dayName = getDayName(DateTime.now().weekday);
-    String defaultToday = getDefaultSchedule()[stream]?[dayName] ?? "";
+    Map streamMap = getDefaultSchedule()[stream] ?? {};
+    String defaultToday = (streamMap[dayName] ?? "").toString();
 
     setState(() {
       userShortId = prefs.getInt('local_short_id') ?? 0;
@@ -515,7 +515,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       bool isVIP = appStatus == 'vip';
-      List<String> channels = ['all', isVIP ? 'vip' : 'free'];
+      List channels = ['all', isVIP ? 'vip' : 'free'];
 
       for (String target in channels) {
         final snapshot = await FirebaseDatabase.instance.ref("announcements/$target").get();
@@ -565,9 +565,10 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       String lastShownDay = prefs.getString('last_study_prompt_day') ?? '';
 
       String dayName = getDayName(DateTime.now().weekday);
+      Map streamMap = getDefaultSchedule()[userStream] ?? {};
       String todayCourse = todayScheduleCourse.isNotEmpty
           ? todayScheduleCourse
-          : (getDefaultSchedule()[userStream]?[dayName] ?? "General Revision");
+          : (streamMap[dayName] ?? "General Revision").toString();
 
       if (lastShownDay != todayKey && mounted) {
         showDialog(
@@ -967,9 +968,10 @@ class HomeContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     String todayDay = getDayName(DateTime.now().weekday);
+    Map streamMap = getDefaultSchedule()[userStream] ?? {};
     String displaySubject = todayCourse.isNotEmpty
         ? todayCourse
-        : (getDefaultSchedule()[userStream]?[todayDay] ?? "General Study");
+        : (streamMap[todayDay] ?? "General Study").toString();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
@@ -1177,9 +1179,6 @@ class HomeContent extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// 📅 የጥናት ፕሮግራም እና ሙሉ የ2019 COURSE OUTLINE ገጽ
-// ============================================================================
 class StudyScheduleScreen extends StatefulWidget {
   final String userStream;
   const StudyScheduleScreen({Key? key, required this.userStream}) : super(key: key);
@@ -1189,8 +1188,8 @@ class StudyScheduleScreen extends StatefulWidget {
 
 class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
   late String selectedStream;
-  Map<String, String> scheduleData = {};
-  Map<String, bool> completedDays = {};
+  Map scheduleData = {};
+  Map completedDays = {};
   bool isLoading = true;
 
   final List<String> daysOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -1205,7 +1204,7 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
   Future _loadSchedule() async {
     setState(() => isLoading = true);
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    Map<String, String> defaultMap = Map.from(getDefaultSchedule()[selectedStream] ?? {});
+    Map defaultMap = Map.from(getDefaultSchedule()[selectedStream] ?? {});
 
     try {
       final snap = await FirebaseDatabase.instance.ref("admin_content/schedule/$selectedStream").get().timeout(const Duration(seconds: 4));
@@ -1217,7 +1216,7 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
       }
     } catch (_) {}
 
-    Map<String, bool> tempCompleted = {};
+    Map tempCompleted = {};
     for (String d in daysOrder) {
       tempCompleted[d] = prefs.getBool('study_done_${selectedStream}_$d') ?? false;
     }
@@ -1233,7 +1232,7 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
 
   Future _toggleDayRead(String day) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    bool current = completedDays[day] ?? false;
+    bool current = completedDays[day] == true;
     await prefs.setBool('study_done_${selectedStream}_$day', !current);
     setState(() {
       completedDays[day] = !current;
@@ -1286,7 +1285,6 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
         ),
         body: TabBarView(
           children: [
-            // TAB 1: WEEKLY SCHEDULE
             isLoading
                 ? const Center(child: CircularProgressIndicator(color: Colors.amber))
                 : ListView.builder(
@@ -1294,9 +1292,9 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
                     itemCount: daysOrder.length,
                     itemBuilder: (context, index) {
                       String day = daysOrder[index];
-                      String course = scheduleData[day] ?? "Revision";
+                      String course = (scheduleData[day] ?? "Revision").toString();
                       bool isToday = day == todayName;
-                      bool isDone = completedDays[day] ?? false;
+                      bool isDone = completedDays[day] == true;
 
                       return Container(
                         margin: const EdgeInsets.only(bottom: 12),
@@ -1341,13 +1339,12 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
                     },
                   ),
 
-            // TAB 2: FULL 2019 COURSE OUTLINES BY SUBJECT
             ListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: streamSubjects.length,
               itemBuilder: (context, idx) {
                 String subject = streamSubjects[idx];
-                List> units = OFFICIAL_COURSE_OUTLINES[subject] ?? [];
+                List units = (officialCourseOutlines[subject] as List?) ?? [];
                 return Card(
                   color: const Color(0xFF181B28),
                   margin: const EdgeInsets.only(bottom: 14),
@@ -1358,7 +1355,8 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
                     leading: const CircleAvatar(backgroundColor: Colors.amber, child: Icon(Icons.auto_stories, color: Colors.black)),
                     title: Text("$subject Syllabus", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                     subtitle: Text("${units.length} Official MoE Units", style: const TextStyle(color: Colors.cyanAccent, fontSize: 12)),
-                    children: units.map((u) {
+                    children: units.map<Widget>((u) {
+                      Map unitMap = u as Map;
                       return Container(
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -1366,9 +1364,9 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(u["unit"] ?? "", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 14)),
+                            Text((unitMap["unit"] ?? "").toString(), style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 14)),
                             const SizedBox(height: 6),
-                            Text(u["topics"] ?? "", style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4)),
+                            Text((unitMap["topics"] ?? "").toString(), style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4)),
                           ],
                         ),
                       );
@@ -1615,9 +1613,6 @@ class AdminDashboardScreen extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// 📅 ADMIN SCHEDULE MANAGER (WITH 2019 SYLLABUS TOPIC PICKER)
-// ============================================================================
 class AdminScheduleManagerScreen extends StatefulWidget {
   const AdminScheduleManagerScreen({Key? key}) : super(key: key);
   @override
@@ -1636,7 +1631,8 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
   @override
   void initState() {
     super.initState();
-    courseCtrl.text = getDefaultSchedule()[selectedStream]?[selectedDay] ?? "";
+    Map streamMap = getDefaultSchedule()[selectedStream] ?? {};
+    courseCtrl.text = (streamMap[selectedDay] ?? "").toString();
   }
 
   Future saveAndNotifySchedule({required bool sendPushAlert}) async {
@@ -1671,7 +1667,8 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
 
   @override
   Widget build(BuildContext context) {
-    List> subjectUnits = OFFICIAL_COURSE_OUTLINES[selectedSubjectForPicker] ?? [];
+    List subjectUnits = (officialCourseOutlines[selectedSubjectForPicker] as List?) ?? [];
+    List<String> subjectKeys = officialCourseOutlines.keys.map((k) => k.toString()).toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text("📅 የ2019 ፕሮግራም ማስተካከያ")),
@@ -1697,7 +1694,8 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
                       if (val != null) {
                         setState(() {
                           selectedStream = val;
-                          courseCtrl.text = getDefaultSchedule()[selectedStream]?[selectedDay] ?? "";
+                          Map streamMap = getDefaultSchedule()[selectedStream] ?? {};
+                          courseCtrl.text = (streamMap[selectedDay] ?? "").toString();
                         });
                       }
                     },
@@ -1714,7 +1712,8 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
                       if (val != null) {
                         setState(() {
                           selectedDay = val;
-                          courseCtrl.text = getDefaultSchedule()[selectedStream]?[selectedDay] ?? "";
+                          Map streamMap = getDefaultSchedule()[selectedStream] ?? {};
+                          courseCtrl.text = (streamMap[selectedDay] ?? "").toString();
                         });
                       }
                     },
@@ -1729,7 +1728,7 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
               value: selectedSubjectForPicker,
               dropdownColor: const Color(0xFF1E2235),
               decoration: const InputDecoration(labelText: "ትምህርት ይምረጡ (Subject)", border: OutlineInputBorder()),
-              items: OFFICIAL_COURSE_OUTLINES.keys.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+              items: subjectKeys.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
               onChanged: (val) {
                 if (val != null) setState(() => selectedSubjectForPicker = val);
               },
@@ -1741,8 +1740,9 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
                 scrollDirection: Axis.horizontal,
                 itemCount: subjectUnits.length,
                 itemBuilder: (context, i) {
-                  String uTitle = subjectUnits[i]["unit"] ?? "";
-                  String uTopics = subjectUnits[i]["topics"] ?? "";
+                  Map uMap = subjectUnits[i] as Map;
+                  String uTitle = (uMap["unit"] ?? "").toString();
+                  String uTopics = (uMap["topics"] ?? "").toString();
                   return GestureDetector(
                     onTap: () {
                       setState(() {
