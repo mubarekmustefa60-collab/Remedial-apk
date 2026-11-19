@@ -9,9 +9,15 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 
 const String APP_VERSION = "1.1.0";
 const int OWNER_ADMIN_ID = 5053;
+
+// የ GitHub Releases ቋሚ የቀጥታ ማውረጃ ሊንክ (Direct APK Download URL)
+const String DEFAULT_DIRECT_APK_URL = "https://github.com/mubarekmustefa60-collab/Remedial-apk/releases/latest/download/Remedial_Matrix_Universal.apk";
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,7 +65,226 @@ class RemedialApp extends StatelessWidget {
 }
 
 // ============================================================================
-// 📚 OFFICIAL 2019 REMEDIAL COURSE OUTLINES (SAFE SYNTAX WITHOUT NESTED <>)
+// 🚀 1XBET-STYLE IN-APP SELF-UPDATER SCREEN (WITH % PROGRESS & AUTO-INSTALL)
+// ============================================================================
+class InAppUpdateScreen extends StatefulWidget {
+  final String latestVersion;
+  final String downloadUrl;
+  final String whatsNew;
+
+  const InAppUpdateScreen({
+    Key? key,
+    required this.latestVersion,
+    required this.downloadUrl,
+    required this.whatsNew,
+  }) : super(key: key);
+
+  @override
+  _InAppUpdateScreenState createState() => _InAppUpdateScreenState();
+}
+
+class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
+  bool isDownloading = false;
+  double progress = 0.0;
+  String statusMessage = "";
+  bool hasError = false;
+
+  Future<void> _startInAppUpdate() async {
+    String url = widget.downloadUrl.trim();
+    // ሊንኩ የቴሌግራም ከሆነ በቀጥታ ማውረድ ስለማይቻል ወደ GitHub Direct Link ወይም ወደ ብራውዘር ይቀይረዋል
+    if (url.contains("t.me/")) {
+      url = DEFAULT_DIRECT_APK_URL;
+    }
+
+    setState(() {
+      isDownloading = true;
+      hasError = false;
+      progress = 0.0;
+      statusMessage = "Downloading update...";
+    });
+
+    try {
+      final dir = await getTemporaryDirectory();
+      final savePath = "${dir.path}/Remedial_Matrix_Update_${widget.latestVersion}.apk";
+
+      Dio dio = Dio();
+      await dio.download(
+        url,
+        savePath,
+        onReceiveProgress: (received, total) {
+          if (total != -1 && mounted) {
+            setState(() {
+              progress = received / total;
+            });
+          }
+        },
+      );
+
+      if (mounted) {
+        setState(() {
+          statusMessage = "Opening installer...";
+        });
+      }
+
+      // ልክ እንደ 1xBet የስልኩን "Update this app?" መጫኛ በቀጥታ ይጠራል!
+      final result = await OpenFilex.open(savePath, type: "application/vnd.android.package-archive");
+      if (result.type != ResultType.done && mounted) {
+        setState(() {
+          isDownloading = false;
+          hasError = true;
+          statusMessage = "መጫኛውን መክፈት አልተቻለም፦ ${result.message}";
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          isDownloading = false;
+          hasError = true;
+          statusMessage = "በቀጥታ ማውረድ አልተቻለም። እባክዎ በብራውዘር/ቴሌግራም ያውርዱ።";
+        });
+      }
+    }
+  }
+
+  void _showWhatsNewDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF181B28),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text("✨ What's new in v${widget.latestVersion}?", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+        content: Text(
+          widget.whatsNew.isNotEmpty
+              ? widget.whatsNew
+              : "• የ2019 ሙሉ Course Outline እና የጥናት ፕሮግራም ተካቷል\n• አውቶማቲክ የVIP አካውንት መመለሻ\n• የተሻሻለ ፍጥነት እና ዲዛይን",
+          style: const TextStyle(color: Colors.white, fontSize: 14.5, height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close", style: TextStyle(color: Colors.amber))),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    int percent = (progress * 100).toInt().clamp(0, 100);
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF061126),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Align(
+                alignment: Alignment.topRight,
+                child: IconButton(
+                  icon: const CircleAvatar(
+                    backgroundColor: Colors.white12,
+                    child: Icon(Icons.close, color: Colors.white70, size: 20),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
+              Column(
+                children: [
+                  Container(
+                    height: 180,
+                    width: 180,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const RadialGradient(colors: [Color(0xFF1E56A0), Color(0xFF061126)], radius: 0.8),
+                      boxShadow: [BoxShadow(color: Colors.blueAccent.withOpacity(0.35), blurRadius: 40, spreadRadius: 10)],
+                    ),
+                    child: const Icon(Icons.rocket_launch_rounded, size: 95, color: Colors.amber),
+                  ),
+                  const SizedBox(height: 25),
+                  const Text("REMEDIAL MATRIX", style: TextStyle(color: Colors.amber, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                  const SizedBox(height: 8),
+                  Text("Version ${widget.latestVersion}", style: const TextStyle(color: Colors.cyanAccent, fontSize: 14, fontWeight: FontWeight.w600)),
+                ],
+              ),
+              if (!isDownloading)
+                Column(
+                  children: [
+                    const Text(
+                      "A new version of the app is available, press \"Update\" to install",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 16, height: 1.4),
+                    ),
+                    if (hasError) ...[
+                      const SizedBox(height: 12),
+                      Text(statusMessage, textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+                      TextButton.icon(
+                        onPressed: () => launchUrl(Uri.parse(widget.downloadUrl), mode: LaunchMode.externalApplication),
+                        icon: const Icon(Icons.open_in_browser, color: Colors.amber),
+                        label: const Text("በቴሌግራም / ብራውዘር አውርድ", style: TextStyle(color: Colors.amber)),
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2B3548),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: _showWhatsNewDialog,
+                        child: const Text("What's new?", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF4C9EEB),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: _startInAppUpdate,
+                        child: const Text("Update", style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(statusMessage, style: const TextStyle(color: Colors.white70, fontSize: 15)),
+                        Text("$percent%", style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        minHeight: 6,
+                        backgroundColor: Colors.white12,
+                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF4C9EEB)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 📚 OFFICIAL 2019 REMEDIAL COURSE OUTLINES
 // ============================================================================
 const Map officialCourseOutlines = {
   "Mathematics": [
@@ -476,34 +701,24 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (_) {}
   }
 
+  // 🚀 ልክ እንደ 1xBet አዲስ Update ሲኖር ሙሉውን የIn-App Updater ገጽ ይከፍታል!
   Future _checkAppUpdate() async {
     try {
       final snapshot = await FirebaseDatabase.instance.ref("admin_settings/update").get();
       if (snapshot.exists) {
         Map data = snapshot.value as Map;
-        String latestVersion = data['version'] ?? APP_VERSION;
-        String updateUrl = data['url'] ?? 'https://t.me/ADDIS_REMEDIAL';
+        String latestVersion = (data['version'] ?? APP_VERSION).toString();
+        String updateUrl = (data['url'] ?? DEFAULT_DIRECT_APK_URL).toString();
+        String whatsNew = (data['whats_new'] ?? '').toString();
 
         if (latestVersion != APP_VERSION && mounted) {
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => AlertDialog(
-              backgroundColor: const Color(0xFF1E2235),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: const Row(children: [Icon(Icons.system_update, color: Colors.greenAccent, size: 28), SizedBox(width: 10), Expanded(child: Text("አዲስ Update ተለቋል!", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)))]),
-              content: Text(
-                "የ Remedial Matrix አዲስ ቨርሽን ($latestVersion) ተለቋል!\n\nእባክዎ አዲሱን አፕሊኬሽን በማውረድ ይጫኑት (ከዚህ በፊት VIP ከነበሩ ስምዎን ሲያስገቡ በራሱ VIP ይመልስልዎታል)።",
-                style: const TextStyle(color: Colors.white70, height: 1.5),
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => InAppUpdateScreen(
+                latestVersion: latestVersion,
+                downloadUrl: updateUrl,
+                whatsNew: whatsNew,
               ),
-              actions: [
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent.shade700, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
-                  onPressed: () => launchUrl(Uri.parse(updateUrl), mode: LaunchMode.externalApplication),
-                  icon: const Icon(Icons.download, color: Colors.black),
-                  label: const Text("Update Now (አውርድ)", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                )
-              ],
             ),
           );
         }
@@ -1604,7 +1819,7 @@ class AdminDashboardScreen extends StatelessWidget {
               style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.purpleAccent, minimumSize: const Size(double.infinity, 52)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminUpdateAppScreen())),
               icon: const Icon(Icons.system_update, color: Colors.white),
-              label: const Text("🚀 አዲስ አፕሊኬሽን (Update) ልቀቅ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              label: const Text("🚀 አዲስ አፕሊኬሽን (1xBet-Style Update) ልቀቅ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -1978,30 +2193,38 @@ class AdminUpdateAppScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     TextEditingController verCtrl = TextEditingController(text: "1.1.0");
-    TextEditingController urlCtrl = TextEditingController(text: "https://t.me/ADDIS_REMEDIAL");
+    TextEditingController urlCtrl = TextEditingController(text: DEFAULT_DIRECT_APK_URL);
+    TextEditingController whatsNewCtrl = TextEditingController(text: "• የ2019 ሙሉ Course Outline እና የጥናት ፕሮግራም ተካቷል\n• አውቶማቲክ የVIP አካውንት መመለሻ\n• የተሻሻለ ፍጥነት እና ዲዛይን");
+
     return Scaffold(
-      appBar: AppBar(title: const Text("🚀 አዲስ Update ልቀቅ")),
-      body: Padding(
+      appBar: AppBar(title: const Text("🚀 1xBet-Style Update ልቀቅ")),
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(children: [
-          const Text("ይህንን ቁልፍ ስትጫን የድሮውን አፕ (1.0.0) የሚጠቀሙ ተማሪዎች ሁሉ አዲሱን (1.1.0) ከቴሌግራም እንዲያወርዱ ወዲያውኑ ያስገድዳቸዋል!", style: TextStyle(color: Colors.amber)),
+          const Text("ይህንን ስትጫን ተማሪዎች ወደ ቴሌግራም መሄድ ሳያስፈልጋቸው፣ ልክ እንደ 1xBet እዛው አፑ ውስጥ በፐርሰንት ቆጥሮ በራሱ ላይ Update ያደርግላቸዋል!", style: TextStyle(color: Colors.amber)),
           const SizedBox(height: 20),
-          TextField(controller: verCtrl, decoration: const InputDecoration(labelText: "አዲሱ ቨርሽን (ምሳሌ: 1.1.0)", border: OutlineInputBorder())),
+          TextField(controller: verCtrl, decoration: const InputDecoration(labelText: "አዲሱ ቨርሽን (ምሳሌ: 1.2.0)", border: OutlineInputBorder())),
           const SizedBox(height: 15),
-          TextField(controller: urlCtrl, decoration: const InputDecoration(labelText: "የማውረጃ ሊንክ (የቴሌግራም ቻናል ሊንክ)", border: OutlineInputBorder())),
+          TextField(controller: urlCtrl, decoration: const InputDecoration(labelText: "Direct APK Download URL (GitHub Release)", border: OutlineInputBorder())),
+          const SizedBox(height: 15),
+          TextField(controller: whatsNewCtrl, maxLines: 4, decoration: const InputDecoration(labelText: "What's new? (ምን አዲስ ነገር ተጨመረ?)", border: OutlineInputBorder())),
           const SizedBox(height: 20),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, minimumSize: const Size(double.infinity, 50)),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, minimumSize: const Size(double.infinity, 52)),
             onPressed: () async {
               if (verCtrl.text.isNotEmpty && urlCtrl.text.isNotEmpty) {
-                await FirebaseDatabase.instance.ref("admin_settings/update").set({"version": verCtrl.text.trim(), "url": urlCtrl.text.trim()});
+                await FirebaseDatabase.instance.ref("admin_settings/update").set({
+                  "version": verCtrl.text.trim(),
+                  "url": urlCtrl.text.trim(),
+                  "whats_new": whatsNewCtrl.text.trim(),
+                });
                 if (context.mounted) {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ የUpdate ትዕዛዝ ለሁሉም ተማሪዎች ተልኳል!"), backgroundColor: Colors.green));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ የIn-App Update ትዕዛዝ ለሁሉም ተማሪዎች ተልኳል!"), backgroundColor: Colors.green));
                 }
               }
             },
-            child: const Text("ለተማሪዎች አሳውቅ (Push Update)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: const Text("ለተማሪዎች አሳውቅ (Push In-App Update)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           )
         ]),
       ),
