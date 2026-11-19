@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -13,6 +16,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -26,6 +31,21 @@ jobs:
           flutter-version: '3.24.3'
           channel: 'stable'
 
+      - name: Ensure Permanent Keystore Exists (For Seamless Overwrite Updates)
+        run: |
+          if [ ! -f "remedial-release-key.jks" ]; then
+            echo "Generating permanent release keystore..."
+            keytool -genkey -v -keystore remedial-release-key.jks \
+              -keyalg RSA -keysize 2048 -validity 10000 -alias remedial_key \
+              -dname "CN=Mubarek Mustefa, OU=Remedial Matrix, O=Remedial Matrix, L=Addis Ababa, S=AA, C=ET" \
+              -storepass Remedial2026 -keypass Remedial2026
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add remedial-release-key.jks
+            git commit -m "Save permanent signing keystore for seamless app updates [skip ci]" || true
+            git push || true
+          fi
+
       - name: Create Flutter Project
         run: flutter create --org com.remedial.matrix --project-name remedial_matrix app_build
 
@@ -33,36 +53,50 @@ jobs:
         run: |
           cp pubspec.yaml app_build/pubspec.yaml
           cp main.dart app_build/lib/main.dart
+          cp remedial-release-key.jks app_build/android/app/remedial-release-key.jks
           mkdir -p app_build/assets
           cp assets/questions.json app_build/assets/questions.json || cp questions.json app_build/assets/questions.json || true
           cp assets/logo.png app_build/assets/logo.png || cp logo.png app_build/assets/logo.png || true
 
-      - name: Configure App Name & Seamless Update (API 21 to 35)
+      - name: Configure App Name, Permissions & Permanent Release Signing
         run: |
+          # 1. የአፑ ስም እና የውስጥ Update መጫኛ ፈቃድ (REQUEST_INSTALL_PACKAGES)
           sed -i 's/android:label="remedial_matrix"/android:label="Remedial Matrix"/g' app_build/android/app/src/main/AndroidManifest.xml || true
           sed -i 's/android:label="app_build"/android:label="Remedial Matrix"/g' app_build/android/app/src/main/AndroidManifest.xml || true
-          sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/g' app_build/android/app/src/main/AndroidManifest.xml || true
+          sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"\/>/g' app_build/android/app/src/main/AndroidManifest.xml || true
 
+          # 2. በቋሚው Keystore እንዲፈረም ማድረግ (Groovy build.gradle)
           if [ -f "app_build/android/app/build.gradle" ]; then
             sed -i 's/flutter.compileSdkVersion/35/g' app_build/android/app/build.gradle
             sed -i 's/flutter.targetSdkVersion/34/g' app_build/android/app/build.gradle
             sed -i 's/flutter.minSdkVersion/21/g' app_build/android/app/build.gradle
-            echo '
+            sed -i 's/signingConfig signingConfigs.debug/signingConfig signingConfigs.release/g' app_build/android/app/build.gradle || true
+            cat << 'EOF' >> app_build/android/app/build.gradle
             android {
+                signingConfigs {
+                    release {
+                        storeFile file("remedial-release-key.jks")
+                        storePassword "Remedial2026"
+                        keyAlias "remedial_key"
+                        keyPassword "Remedial2026"
+                    }
+                }
                 lintOptions {
                     checkReleaseBuilds false
                     abortOnError false
                 }
                 buildTypes {
                     release {
+                        signingConfig signingConfigs.release
                         minifyEnabled false
                         shrinkResources false
                     }
                 }
             }
-            ' >> app_build/android/app/build.gradle
+            EOF
           fi
 
+          # 3. Kotlin DSL (build.gradle.kts) ከሆነ
           if [ -f "app_build/android/app/build.gradle.kts" ]; then
             sed -i 's/flutter.compileSdkVersion/35/g' app_build/android/app/build.gradle.kts
             sed -i 's/flutter.targetSdkVersion/34/g' app_build/android/app/build.gradle.kts
@@ -82,8 +116,16 @@ jobs:
           flutter build apk --release --tree-shake-icons --target-platform android-arm,android-arm64 -Pdisable-lint=true
           cp build/app/outputs/flutter-apk/app-release.apk ../Remedial_Matrix_Universal.apk
 
-      - name: Upload Universal APK
+      - name: Upload Universal APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Remedial-Matrix-Universal-APK
           path: Remedial_Matrix_Universal.apk
+
+      - name: Publish Direct Download Link to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Remedial Matrix Latest Release
+          files: Remedial_Matrix_Universal.apk
+          overwrite: true
