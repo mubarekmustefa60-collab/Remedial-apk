@@ -31,10 +31,9 @@ jobs:
           flutter-version: '3.24.3'
           channel: 'stable'
 
-      - name: Ensure Permanent Keystore Exists (For Seamless Overwrite Updates)
+      - name: Ensure Permanent Keystore Exists
         run: |
           if [ ! -f "remedial-release-key.jks" ]; then
-            echo "Generating permanent release keystore..."
             keytool -genkey -v -keystore remedial-release-key.jks \
               -keyalg RSA -keysize 2048 -validity 10000 -alias remedial_key \
               -dname "CN=Mubarek Mustefa, OU=Remedial Matrix, O=Remedial Matrix, L=Addis Ababa, S=AA, C=ET" \
@@ -42,7 +41,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add remedial-release-key.jks
-            git commit -m "Save permanent signing keystore for seamless app updates [skip ci]" || true
+            git commit -m "Save permanent signing keystore [skip ci]" || true
             git push || true
           fi
 
@@ -60,49 +59,64 @@ jobs:
 
       - name: Configure App Name, Permissions & Permanent Release Signing
         run: |
-          # 1. የአፑ ስም እና የውስጥ Update መጫኛ ፈቃድ (REQUEST_INSTALL_PACKAGES)
-          sed -i 's/android:label="remedial_matrix"/android:label="Remedial Matrix"/g' app_build/android/app/src/main/AndroidManifest.xml || true
-          sed -i 's/android:label="app_build"/android:label="Remedial Matrix"/g' app_build/android/app/src/main/AndroidManifest.xml || true
-          sed -i 's/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"\/>/g' app_build/android/app/src/main/AndroidManifest.xml || true
+          python3 -c '
+          import os
 
-          # 2. በቋሚው Keystore እንዲፈረም ማድረግ (Groovy build.gradle)
-          if [ -f "app_build/android/app/build.gradle" ]; then
-            sed -i 's/flutter.compileSdkVersion/35/g' app_build/android/app/build.gradle
-            sed -i 's/flutter.targetSdkVersion/34/g' app_build/android/app/build.gradle
-            sed -i 's/flutter.minSdkVersion/21/g' app_build/android/app/build.gradle
-            sed -i 's/signingConfig signingConfigs.debug/signingConfig signingConfigs.release/g' app_build/android/app/build.gradle || true
-            cat << 'EOF' >> app_build/android/app/build.gradle
-            android {
-                signingConfigs {
-                    release {
-                        storeFile file("remedial-release-key.jks")
-                        storePassword "Remedial2026"
-                        keyAlias "remedial_key"
-                        keyPassword "Remedial2026"
-                    }
-                }
-                lintOptions {
-                    checkReleaseBuilds false
-                    abortOnError false
-                }
-                buildTypes {
-                    release {
-                        signingConfig signingConfigs.release
-                        minifyEnabled false
-                        shrinkResources false
-                    }
-                }
-            }
-            EOF
-          fi
+          manifest_path = "app_build/android/app/src/main/AndroidManifest.xml"
+          with open(manifest_path, "r") as f:
+              m = f.read()
+          m = m.replace("android:label=\"remedial_matrix\"", "android:label=\"Remedial Matrix\"")
+          m = m.replace("android:label=\"app_build\"", "android:label=\"Remedial Matrix\"")
+          if "REQUEST_INSTALL_PACKAGES" not in m:
+              perms = "<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <uses-permission android:name=\"android.permission.REQUEST_INSTALL_PACKAGES\"/>\n    <application"
+              m = m.replace("<application", perms, 1)
+          with open(manifest_path, "w") as f:
+              f.write(m)
 
-          # 3. Kotlin DSL (build.gradle.kts) ከሆነ
-          if [ -f "app_build/android/app/build.gradle.kts" ]; then
-            sed -i 's/flutter.compileSdkVersion/35/g' app_build/android/app/build.gradle.kts
-            sed -i 's/flutter.targetSdkVersion/34/g' app_build/android/app/build.gradle.kts
-            sed -i 's/flutter.minSdkVersion/21/g' app_build/android/app/build.gradle.kts
-            echo 'android { lint { checkReleaseBuilds = false; abortOnError = false } }' >> app_build/android/app/build.gradle.kts
-          fi
+          gradle_path = "app_build/android/app/build.gradle"
+          if os.path.exists(gradle_path):
+              with open(gradle_path, "r") as f:
+                  g = f.read()
+              g = g.replace("flutter.compileSdkVersion", "35")
+              g = g.replace("flutter.targetSdkVersion", "34")
+              g = g.replace("flutter.minSdkVersion", "21")
+              signing_block = """
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file("remedial-release-key.jks")
+                      storePassword "Remedial2026"
+                      keyAlias "remedial_key"
+                      keyPassword "Remedial2026"
+                  }
+              }
+              lintOptions {
+                  checkReleaseBuilds false
+                  abortOnError false
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                      minifyEnabled false
+                      shrinkResources false
+                  }
+              }
+          }
+          """
+              with open(gradle_path, "w") as f:
+                  f.write(g + "\n" + signing_block)
+
+          kts_path = "app_build/android/app/build.gradle.kts"
+          if os.path.exists(kts_path):
+              with open(kts_path, "r") as f:
+                  k = f.read()
+              k = k.replace("flutter.compileSdkVersion", "35")
+              k = k.replace("flutter.targetSdkVersion", "34")
+              k = k.replace("flutter.minSdkVersion", "21")
+              k += "\nandroid { lint { checkReleaseBuilds = false; abortOnError = false } }\n"
+              with open(kts_path, "w") as f:
+                  f.write(k)
+          '
 
       - name: Install Dependencies & Generate Icon
         working-directory: ./app_build
@@ -128,4 +142,3 @@ jobs:
           tag_name: latest
           name: Remedial Matrix Latest Release
           files: Remedial_Matrix_Universal.apk
-          overwrite: true
