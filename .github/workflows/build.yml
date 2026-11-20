@@ -67,7 +67,6 @@ jobs:
 
           has_google_services = os.path.exists("app_build/android/app/google-services.json")
 
-          # 1. AndroidManifest.xml permissions & app name
           manifest_path = "app_build/android/app/src/main/AndroidManifest.xml"
           with open(manifest_path, "r") as f:
               m = f.read()
@@ -86,7 +85,6 @@ jobs:
           with open(manifest_path, "w") as f:
               f.write(m)
 
-          # 2. settings.gradle for Google Services plugin (FCM)
           settings_path = "app_build/android/settings.gradle"
           if has_google_services and os.path.exists(settings_path):
               with open(settings_path, "r") as f:
@@ -100,7 +98,6 @@ jobs:
                   with open(settings_path, "w") as f:
                       f.write(s)
 
-          # 3. app/build.gradle (SDK 35, Desugaring, Google Services, Signing)
           gradle_path = "app_build/android/app/build.gradle"
           if os.path.exists(gradle_path):
               with open(gradle_path, "r") as f:
@@ -146,7 +143,6 @@ jobs:
               with open(gradle_path, "w") as f:
                   f.write(g + "\n" + extra_block)
 
-          # 4. MainActivity.kt (Screenshot control channel: blocks students, allows Owner/Admin)
           for root, dirs, files in os.walk("app_build/android/app/src/main/kotlin"):
               for fn in files:
                   if fn == "MainActivity.kt":
@@ -185,10 +181,22 @@ jobs:
                           f.write(kotlin_code)
           '
 
-      - name: Install Dependencies & Generate Icon
+      - name: Install Dependencies, Patch Notification Plugin & Generate Icon
         working-directory: ./app_build
         run: |
           flutter pub get
+          python3 -c '
+          import glob, os, re
+          pub_cache = os.environ.get("PUB_CACHE", os.path.expanduser("~/.pub-cache"))
+          pattern = os.path.join(pub_cache, "hosted", "pub.dev", "flutter_local_notifications-*", "android", "src", "main", "java", "com", "dexterous", "flutterlocalnotifications", "FlutterLocalNotificationsPlugin.java")
+          for p in glob.glob(pattern):
+              with open(p, "r") as f:
+                  txt = f.read()
+              new_txt = re.sub(r"bigLargeIcon\s*\(\s*null\s*\)", "bigLargeIcon((android.graphics.Bitmap) null)", txt)
+              with open(p, "w") as f:
+                  f.write(new_txt)
+              print("Patched:", p)
+          '
           dart run flutter_launcher_icons || true
 
       - name: Build Universal APK
