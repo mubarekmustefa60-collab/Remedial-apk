@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
@@ -6,35 +7,197 @@ import 'dart:math';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:share_plus/share_plus.dart';
 
-const String APP_VERSION = "1.1.0";
+const String APP_VERSION = "1.2.0";
 const int OWNER_ADMIN_ID = 5053;
 
-// የ GitHub Releases ቋሚ የቀጥታ ማውረጃ ሊንክ (Direct APK Download URL)
-const String DEFAULT_DIRECT_APK_URL = "https://github.com/mubarekmustefa60-collab/Remedial-apk/releases/latest/download/Remedial_Matrix_Universal.apk";
+// የ Public ሪፖዚቶሪ (Remedial-Updates) ቋሚ ሊንኮች
+const String DEFAULT_DIRECT_APK_URL = "https://github.com/mubarekmustefa60-collab/Remedial-Updates/releases/latest/download/Remedial_Matrix_Universal.apk";
+const String REMOTE_FIREBASE_CONFIG_URL = "https://raw.githubusercontent.com/mubarekmustefa60-collab/Remedial-Updates/main/firebase_config.json";
+const String TELEGRAM_CHANNEL_URL = "https://t.me/REMEDIAL_MATRIX";
+
+const MethodChannel _securityChannel = MethodChannel("com.remedial.matrix/security");
+final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
+
+// Dynamic Firebase Database Reference (ወደፊት Firebase account ቢቀየር አፑ ሳይረበሽ የሚቀጥልበት)
+FirebaseDatabase? _activeDatabase;
+
+DatabaseReference dbRef(String path) {
+  if (_activeDatabase != null) {
+    return _activeDatabase!.ref(path);
+  }
+  return FirebaseDatabase.instance.ref(path);
+}
+
+Future<void> setScreenshotProtection(bool enabled) async {
+  try {
+    await _securityChannel.invokeMethod('setSecure', {'secure': enabled});
+  } catch (_) {}
+}
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {}
+}
+
+Future<void> _initLocalNotifications() async {
+  try {
+    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initSettings = InitializationSettings(android: androidSettings);
+    await _localNotifications.initialize(initSettings);
+  } catch (_) {}
+}
+
+Future<void> _showLocalBanner(String title, String body, {int id = 1}) async {
+  try {
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'remedial_matrix_channel',
+      'Remedial Matrix Alerts',
+      channelDescription: 'Study reminders and important announcements',
+      importance: Importance.max,
+      priority: Priority.high,
+      playSound: true,
+    );
+    const NotificationDetails details = NotificationDetails(android: androidDetails);
+    await _localNotifications.show(id, title, body, details);
+  } catch (_) {}
+}
+
+Future<void> _scheduleOfflineDailyStudyReminder(String stream) async {
+  try {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    bool alreadyScheduled = prefs.getBool('daily_offline_reminder_set_$stream') ?? false;
+    if (alreadyScheduled) return;
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'daily_study_reminder',
+      'Daily Study Reminder',
+      channelDescription: 'Daily offline study schedule reminder',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const NotificationDetails details = NotificationDetails(android: androidDetails);
+    await _localNotifications.periodicallyShow(
+      2026,
+      '📅 የዛሬውን የጥናት ፕሮግራም አንብበዋል?',
+      'Remedial Matrix ን ከፍተው የዛሬውን የ$stream ኮርስ እና ፈተና ይለማመዱ!',
+      RepeatInterval.daily,
+      details,
+    );
+    await prefs.setBool('daily_offline_reminder_set_$stream', true);
+  } catch (_) {}
+}
+
+Future<void> _initFirebaseWithDynamicSwitcher() async {
+  const FirebaseOptions defaultOptions = FirebaseOptions(
+    apiKey: "AIzaSyBm6UEHXGE7NpcoNUq7BjE8wO7ItTVV8GU",
+    appId: "1:612015829097:android:c9bd7bc7839e3ad0d3b2f8",
+    messagingSenderId: "612015829097",
+    projectId: "remedial-matrix",
+    storageBucket: "remedial-matrix.firebasestorage.app",
+  );
+
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {
+    try {
+      await Firebase.initializeApp(options: defaultOptions);
+    } catch (_) {}
+  }
+
+  // ከ Remedial-Updates/firebase_config.json ላይ የFirebase መረጃ ፈትሾ ከተቀየረ ወደ አዲሱ ያዞረዋል
+  try {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? configJson = prefs.getString('cached_fb_config');
+    try {
+      Response resp = await Dio().get(
+        REMOTE_FIREBASE_CONFIG_URL,
+        options: Options(receiveTimeout: const Duration(seconds: 3), sendTimeout: const Duration(seconds: 3)),
+      );
+      if (resp.statusCode == 200 && resp.data != null) {
+        String raw = resp.data is String ? resp.data : jsonEncode(resp.data);
+        jsonDecode(raw); // validate JSON
+        configJson = raw;
+        await prefs.setString('cached_fb_config', raw);
+      }
+    } catch (_) {}
+
+    if (configJson != null && configJson.isNotEmpty) {
+      Map cfg = jsonDecode(configJson);
+      String remoteProject = (cfg['projectId'] ?? '').toString().trim();
+      String remoteDbUrl = (cfg['databaseURL'] ?? '').toString().trim();
+
+      if (remoteProject.isNotEmpty && remoteProject != "remedial-matrix") {
+        FirebaseApp altApp;
+        try {
+          altApp = Firebase.app('dynamic_db');
+        } catch (_) {
+          altApp = await Firebase.initializeApp(
+            name: 'dynamic_db',
+            options: FirebaseOptions(
+              apiKey: (cfg['apiKey'] ?? '').toString(),
+              appId: (cfg['appId'] ?? '').toString(),
+              messagingSenderId: (cfg['messagingSenderId'] ?? '').toString(),
+              projectId: remoteProject,
+              storageBucket: (cfg['storageBucket'] ?? '').toString(),
+              databaseURL: remoteDbUrl.isNotEmpty ? remoteDbUrl : null,
+            ),
+          );
+        }
+        _activeDatabase = remoteDbUrl.isNotEmpty
+            ? FirebaseDatabase.instanceFor(app: altApp, databaseURL: remoteDbUrl)
+            : FirebaseDatabase.instanceFor(app: altApp);
+      } else if (remoteDbUrl.isNotEmpty) {
+        _activeDatabase = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: remoteDbUrl);
+      }
+    }
+  } catch (_) {}
+
+  try {
+    (_activeDatabase ?? FirebaseDatabase.instance).setPersistenceEnabled(true);
+  } catch (_) {}
+}
+
+Future<void> _setupPushNotifications(bool isVip) async {
+  try {
+    FirebaseMessaging messaging = FirebaseMessaging.instance;
+    await messaging.requestPermission(alert: true, badge: true, sound: true);
+    await messaging.subscribeToTopic('all_students');
+    if (isVip) {
+      await messaging.subscribeToTopic('vip_students');
+      await messaging.unsubscribeFromTopic('free_students');
+    } else {
+      await messaging.subscribeToTopic('free_students');
+      await messaging.unsubscribeFromTopic('vip_students');
+    }
+
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      String title = message.notification?.title ?? (message.data['title'] ?? 'Remedial Matrix').toString();
+      String body = message.notification?.body ?? (message.data['body'] ?? '').toString();
+      if (body.isNotEmpty) {
+        _showLocalBanner(title, body, id: DateTime.now().millisecondsSinceEpoch % 100000);
+      }
+    });
+  } catch (_) {}
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _initLocalNotifications();
+  await _initFirebaseWithDynamicSwitcher();
   try {
-    await Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: "AIzaSyBm6UEHXGE7NpcoNUq7BjE8wO7ItTVV8GU",
-        appId: "1:612015829097:android:c9bd7bc7839e3ad0d3b2f8",
-        messagingSenderId: "612015829097",
-        projectId: "remedial-matrix",
-        storageBucket: "remedial-matrix.firebasestorage.app",
-      ),
-    );
-    FirebaseDatabase.instance.setPersistenceEnabled(true);
-  } catch (e) {
-    debugPrint("Firebase error: $e");
-  }
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  } catch (_) {}
   runApp(const RemedialApp());
 }
 
@@ -65,7 +228,22 @@ class RemedialApp extends StatelessWidget {
 }
 
 // ============================================================================
-// 🚀 1XBET-STYLE IN-APP SELF-UPDATER SCREEN (WITH % PROGRESS & AUTO-INSTALL)
+// 📤 SHARE APP HELPER (ለጓደኞች በቀላሉ አፑን ማጋሪያ)
+// ============================================================================
+void shareRemedialMatrixApp(BuildContext context) {
+  const String shareText =
+      "🎓 Remedial Matrix (2019 Special App)!\n\n"
+      "✅ የ2019 ሙሉ የትምህርት ሚኒስቴር Course Outline\n"
+      "✅ ሳምንታዊ የጥናት ፕሮግራም እና ማሳሰቢያ\n"
+      "✅ የ2015-2018 የሪሚዲያል እና የሞዴል ፈተናዎች ከነማብራሪያቸው\n"
+      "✅ ስማርት Exam Trainer & Pomodoro Timer\n\n"
+      "📥 አፑን በቀጥታ ለማውረድ (Direct Download)፦\n$DEFAULT_DIRECT_APK_URL\n\n"
+      "📢 የቴሌግራም ቻናላችን፦ $TELEGRAM_CHANNEL_URL";
+  Share.share(shareText, subject: 'Remedial Matrix App');
+}
+
+// ============================================================================
+// 🚀 1XBET-STYLE IN-APP SELF-UPDATER SCREEN
 // ============================================================================
 class InAppUpdateScreen extends StatefulWidget {
   final String latestVersion;
@@ -91,7 +269,6 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
 
   Future<void> _startInAppUpdate() async {
     String url = widget.downloadUrl.trim();
-    // ሊንኩ የቴሌግራም ከሆነ በቀጥታ ማውረድ ስለማይቻል ወደ GitHub Direct Link ወይም ወደ ብራውዘር ይቀይረዋል
     if (url.contains("t.me/")) {
       url = DEFAULT_DIRECT_APK_URL;
     }
@@ -126,7 +303,6 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
         });
       }
 
-      // ልክ እንደ 1xBet የስልኩን "Update this app?" መጫኛ በቀጥታ ይጠራል!
       final result = await OpenFilex.open(savePath, type: "application/vnd.android.package-archive");
       if (result.type != ResultType.done && mounted) {
         setState(() {
@@ -140,7 +316,7 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
         setState(() {
           isDownloading = false;
           hasError = true;
-          statusMessage = "በቀጥታ ማውረድ አልተቻለም። እባክዎ በብራውዘር/ቴሌግራም ያውርዱ።";
+          statusMessage = "በቀጥታ ማውረድ አልተቻለም። እባክዎ ከታች ባለው ሊንክ ያውርዱ።";
         });
       }
     }
@@ -156,7 +332,7 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
         content: Text(
           widget.whatsNew.isNotEmpty
               ? widget.whatsNew
-              : "• የ2019 ሙሉ Course Outline እና የጥናት ፕሮግራም ተካቷል\n• አውቶማቲክ የVIP አካውንት መመለሻ\n• የተሻሻለ ፍጥነት እና ዲዛይን",
+              : "• የውጭ Notification እና የዕለቱ የጥናት ማሳሰቢያ\n• የጥያቄ Bookmark እና Pomodoro Timer\n• የ2019 ሙሉ Course Outline እና የውጤት ትንታኔ",
           style: const TextStyle(color: Colors.white, fontSize: 14.5, height: 1.5),
         ),
         actions: [
@@ -220,7 +396,7 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
                       TextButton.icon(
                         onPressed: () => launchUrl(Uri.parse(widget.downloadUrl), mode: LaunchMode.externalApplication),
                         icon: const Icon(Icons.open_in_browser, color: Colors.amber),
-                        label: const Text("በቴሌግራም / ብራውዘር አውርድ", style: TextStyle(color: Colors.amber)),
+                        label: const Text("በብራውዘር / ቴሌግራም አውርድ", style: TextStyle(color: Colors.amber)),
                       ),
                     ],
                     const SizedBox(height: 24),
@@ -340,30 +516,30 @@ const Map officialCourseOutlines = {
     {"unit": "Unit 10: Ecology and Conservation of Biodiversity (5 hrs)", "topics": "• Food Chains/Webs, Nutrient Cycling, Ecological Succession, Biomes, Pollution & Climate Change"},
   ],
   "English": [
-    {"unit": "Unit 1: Road Traffic Accidents (11 hrs)", "topics": "• Reading/Listening: Causes & Socio-Economic Impacts of Traffic Accidents\n• Grammar: Transitive/Intransitive Verbs, Present & Future Tenses (Active/Passive), Question Types (Wh-, Yes/No, Tag, Indirect)\n• Vocabulary & Writing: Context Clues, Phrasal Verbs, Paragraph & Informal Letter Writing"},
-    {"unit": "Unit 2: Artificial Intelligence (11 hrs)", "topics": "• Reading/Speaking: Merits & Demerits of AI, Using 'so' and 'neither', Apologizing\n• Grammar: Past Tenses (Simple, Continuous, Perfect), Conditional Sentences (Zero, I, II, III) & Modals\n• Writing: Fixing Run-on Sentences, Jumbled Paragraphs & Narrative Writing"},
-    {"unit": "Unit 3: Tourist Attractions (11 hrs)", "topics": "• Reading/Speaking: Tourism Industry in Ethiopia, Giving Directions, Describing Places\n• Grammar: Degrees of Comparison, Relative Clauses, Adverbs, Adjectives, Prepositions & Reported Speech\n• Writing: Fixing Dangling Modifiers, Formal Business Letters & Expository Essays"},
-    {"unit": "Unit 4: Global Warming (11 hrs)", "topics": "• Reading/Speaking: Effects of Global Warming, Cause & Effect, Debate, Skimming & Scanning\n• Grammar: Tenses Revision, Quantifiers (many, much, few, little), Articles, Conjunctions & Relative Pronouns\n• Vocabulary & Writing: Synonyms/Antonyms, Analogy, Faulty Parallelism, Reports & CV/Application Letters"},
+    {"unit": "Unit 1: Road Traffic Accidents (11 hrs)", "topics": "• Reading/Listening: Causes & Socio-Economic Impacts of Traffic Accidents\n• Grammar: Transitive/Intransitive Verbs, Present & Future Tenses (Active/Passive), Question Types\n• Vocabulary & Writing: Context Clues, Phrasal Verbs, Paragraph & Informal Letter Writing"},
+    {"unit": "Unit 2: Artificial Intelligence (11 hrs)", "topics": "• Reading/Speaking: Merits & Demerits of AI, Using 'so' and 'neither', Apologizing\n• Grammar: Past Tenses, Conditional Sentences (Zero, I, II, III) & Modals\n• Writing: Fixing Run-on Sentences, Jumbled Paragraphs & Narrative Writing"},
+    {"unit": "Unit 3: Tourist Attractions (11 hrs)", "topics": "• Reading/Speaking: Tourism Industry in Ethiopia, Giving Directions, Describing Places\n• Grammar: Degrees of Comparison, Relative Clauses, Adverbs, Prepositions & Reported Speech\n• Writing: Fixing Dangling Modifiers, Formal Business Letters & Expository Essays"},
+    {"unit": "Unit 4: Global Warming (11 hrs)", "topics": "• Reading/Speaking: Effects of Global Warming, Cause & Effect, Debate, Skimming & Scanning\n• Grammar: Tenses Revision, Quantifiers, Articles, Conjunctions & Relative Pronouns\n• Vocabulary & Writing: Synonyms/Antonyms, Analogy, Faulty Parallelism, Reports & CV"},
     {"unit": "Unit 5: Time Management (10 hrs)", "topics": "• Reading/Speaking: Time Management & Productivity, Expressing Result, Opinion & Purpose\n• Grammar: Future Forms, Sentence Types (Simple, Compound, Complex), Gerunds/Infinitives & Wishes\n• Writing: Memos, Formal Letters & Argumentative Essays"},
-    {"unit": "Unit 6: Indigenous Conflict Resolution (10 hrs)", "topics": "• Reading/Speaking: Conflict Resolution Strategies, Interviews & Panel Discussions\n• Vocabulary: Word Formation (Prefixes/Suffixes), Idioms, Homophones & Phrasal Verbs (get, do, make)\n• Grammar & Writing: Expressing Purpose (so as to, in order to, so that), Regrets, Clauses of Result & Interpreting Charts"},
+    {"unit": "Unit 6: Indigenous Conflict Resolution (10 hrs)", "topics": "• Reading/Speaking: Conflict Resolution Strategies, Interviews & Panel Discussions\n• Vocabulary: Word Formation, Idioms, Homophones & Phrasal Verbs (get, do, make)\n• Grammar & Writing: Expressing Purpose, Regrets, Clauses of Result & Interpreting Charts"},
   ],
   "Geography": [
     {"unit": "Unit 1: Foundations of Geography and Geographic Inquiry (8 hrs)", "topics": "• Meaning, Scope & Branches of Geography\n• Map Components, Scale Conversion, Distance/Area Measurement, Relief Representation & GIS"},
-    {"unit": "Unit 2: Physical Geography of Ethiopia and Africa (25 hrs)", "topics": "• Geological Time Scale, Continental Drift, Landforms of Ethiopia & Africa\n• Weather & Climate, Agro-climatic Zones of Ethiopia, Climate Change Adaptation & Mitigation\n• Natural Resources, Drainage Systems, Water & Biotic Resources of Ethiopia, Resource Conflicts"},
-    {"unit": "Unit 3: Population Geography and Human-Environment Interactions (11 hrs)", "topics": "• World, African & Ethiopian Population Trends, Fertility, Mortality & Migration\n• Settlement Patterns, Population Theories (Malthusian, Boserup) & Population Policies"},
-    {"unit": "Unit 4: Economic Geography and Development (12 hrs)", "topics": "• Economic Activities, Ethiopian Agriculture, Trade, Transport & Tourism\n• African Economic Challenges, Landlocked Countries, Sustainable Development, Poverty & Globalization"},
+    {"unit": "Unit 2: Physical Geography of Ethiopia and Africa (25 hrs)", "topics": "• Geological Time Scale, Continental Drift, Landforms of Ethiopia & Africa\n• Weather & Climate, Agro-climatic Zones of Ethiopia, Climate Change Adaptation & Mitigation\n• Natural Resources, Drainage Systems, Water & Biotic Resources of Ethiopia"},
+    {"unit": "Unit 3: Population Geography and Human-Environment Interactions (11 hrs)", "topics": "• World, African & Ethiopian Population Trends, Fertility, Mortality & Migration\n• Settlement Patterns, Population Theories & Population Policies"},
+    {"unit": "Unit 4: Economic Geography and Development (12 hrs)", "topics": "• Economic Activities, Ethiopian Agriculture, Trade, Transport & Tourism\n• African Economic Challenges, Landlocked Countries, Sustainable Development & Globalization"},
     {"unit": "Unit 5: Contemporary Geographic Issues and Public Concerns (8 hrs)", "topics": "• Environmental Degradation, Unplanned Urbanization, Migration, Coastal Pollution, Drought & Famine"},
   ],
   "History": [
-    {"unit": "Unit 1: Introduction to History (6 hrs)", "topics": "• Definition & Uses of History, Historical Methods, Origin of Humans, State Emergence & Major Civilizations"},
+    {"unit": "Unit 1: Introduction to History (6 hrs)", "topics": "• Definition & Uses of History, Historical Methods, Origin of Humans & Major Civilizations"},
     {"unit": "Unit 2: State Formation & Population Movements in the Horn till 17th C. (9 hrs)", "topics": "• Punt, Da'amet, Aksum, Zagwe, Bizamo, Damot, Enarya, Gafat & Muslim Sultanates\n• Interstate Conflicts, Population Movements & The Gada System of the Oromo"},
-    {"unit": "Unit 3: The Modern World since 1500 (10 hrs)", "topics": "• Renaissance, Reformation, Scientific & Industrial Revolutions\n• English, American & French Revolutions, Napoleonic Era, Unification of Italy/Germany & Eastern Question"},
-    {"unit": "Unit 4: The Gondarian Period (5 hrs)", "topics": "• Jesuits in Ethiopia, Gondar Socio-Political Developments, Yejju Dynasty, Zemene Mesafint & Southern/Eastern Polities"},
+    {"unit": "Unit 3: The Modern World since 1500 (10 hrs)", "topics": "• Renaissance, Reformation, Scientific & Industrial Revolutions\n• English, American & French Revolutions, Napoleonic Era, Unification of Italy/Germany"},
+    {"unit": "Unit 4: The Gondarian Period (5 hrs)", "topics": "• Jesuits in Ethiopia, Gondar Socio-Political Developments, Yejju Dynasty, Zemene Mesafint"},
     {"unit": "Unit 5: Africa and the Outside World to 1900 (6 hrs)", "topics": "• Trans-Atlantic Slave Trade, Legitimate Trade, Scramble for Africa & Colonial Rule Impacts"},
-    {"unit": "Unit 6: Formation of the Modern State of Ethiopia: 1855-1941 (9 hrs)", "topics": "• Unification & Modernization, Battles of Gundet, Gura, Mettema, Adwa & The 1935 Italian Invasion"},
+    {"unit": "Unit 6: Formation of the Modern State of Ethiopia: 1855-1941 (9 hrs)", "topics": "• Unification & Modernization, Battles of Gundet, Gura, Mettema, Adwa & 1935 Italian Invasion"},
     {"unit": "Unit 7: Major Global Developments of the World (12 hrs)", "topics": "• WWI & WWII, 1917 Russian Revolution, Formation of the UNO & The Cold War"},
     {"unit": "Unit 8: African Move Towards Independence (9 hrs)", "topics": "• Anti-Colonial Resistance, Decolonization, Liberation Struggles, Pan-Africanism & OAU"},
-    {"unit": "Unit 9: Ethiopia Since Liberation (12 hrs)", "topics": "• British & American Eras, Eritrean Question, Opposition to Imperial Regime, Dergue Era, Post-1991 & Indigenous Heritages"},
+    {"unit": "Unit 9: Ethiopia Since Liberation (12 hrs)", "topics": "• British & American Eras, Eritrean Question, Dergue Era, Post-1991 & Indigenous Heritages"},
   ],
 };
 
@@ -408,6 +584,10 @@ String getAmharicDay(String englishDay) {
   return map[englishDay] ?? englishDay;
 }
 
+bool isOwnerUser(int shortId, String name) {
+  return (shortId == OWNER_ADMIN_ID) || (name.toLowerCase().trim() == "mubarek mustefa");
+}
+
 class AuthCheckScreen extends StatefulWidget {
   const AuthCheckScreen({Key? key}) : super(key: key);
   @override
@@ -434,7 +614,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
       if (localRegistered && deviceId.isNotEmpty) {
         try {
-          final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get().timeout(const Duration(seconds: 5));
+          final snapshot = await dbRef("students/$deviceId/status").get().timeout(const Duration(seconds: 5));
           if (snapshot.exists) {
             String remoteStatus = snapshot.value.toString();
             if (localStatus == 'vip' && remoteStatus != 'blocked') {
@@ -523,7 +703,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       try {
-        final snap = await FirebaseDatabase.instance.ref("students").get().timeout(const Duration(seconds: 6));
+        final snap = await dbRef("students").get().timeout(const Duration(seconds: 6));
         if (snap.exists && snap.value is Map) {
           Map allStudents = snap.value as Map;
           allStudents.forEach((key, val) {
@@ -558,8 +738,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (!restoredAccount) {
         try {
-          DatabaseReference ref = FirebaseDatabase.instance.ref("students/$deviceId");
-          await ref.set({
+          await dbRef("students/$deviceId").set({
             "full_name": enteredName,
             "stream": selectedStream,
             "status": finalStatus,
@@ -663,6 +842,9 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   String userName = "";
   String userStream = "Natural";
   String todayScheduleCourse = "";
+  bool isAdminCached = false;
+  int? examDaysLeft;
+  String examLabel = "2019 National Remedial Exam";
   int _currentIndex = 0;
 
   @override
@@ -674,6 +856,11 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
 
   Future _initSequence() async {
     await _loadUserData();
+    // ለተማሪዎች Screenshot ይቆልፋል፤ ለባለቤቱ (5053) ግን ክፍት ያደርገዋል
+    await setScreenshotProtection(!isOwnerUser(userShortId, userName));
+    await _setupPushNotifications(appStatus == 'vip');
+    await _scheduleOfflineDailyStudyReminder(userStream);
+    await _loadExamCountdown();
     await _checkAppUpdate();
     await _checkTargetedBroadcast();
     await _checkDailyStudyNotification();
@@ -682,29 +869,52 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   Future _loadUserData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String stream = prefs.getString('local_stream') ?? 'Natural';
+    int id = prefs.getInt('local_short_id') ?? 0;
+    String name = prefs.getString('local_name') ?? 'Student';
+    bool cachedAdmin = (prefs.getBool('owner_admin_cached') ?? false) && isOwnerUser(id, name);
+
     String dayName = getDayName(DateTime.now().weekday);
     Map streamMap = getDefaultSchedule()[stream] ?? {};
     String defaultToday = (streamMap[dayName] ?? "").toString();
 
     setState(() {
-      userShortId = prefs.getInt('local_short_id') ?? 0;
-      userName = prefs.getString('local_name') ?? 'Student';
+      userShortId = id;
+      userName = name;
       userStream = stream;
       todayScheduleCourse = defaultToday;
+      isAdminCached = cachedAdmin;
     });
 
     try {
-      final snap = await FirebaseDatabase.instance.ref("admin_content/schedule/$stream/$dayName").get().timeout(const Duration(seconds: 3));
+      final snap = await dbRef("admin_content/schedule/$stream/$dayName").get().timeout(const Duration(seconds: 3));
       if (snap.exists && snap.value != null && mounted) {
         setState(() => todayScheduleCourse = snap.value.toString());
       }
     } catch (_) {}
   }
 
-  // 🚀 ልክ እንደ 1xBet አዲስ Update ሲኖር ሙሉውን የIn-App Updater ገጽ ይከፍታል!
+  Future _loadExamCountdown() async {
+    try {
+      final snap = await dbRef("admin_settings/exam_countdown").get().timeout(const Duration(seconds: 3));
+      if (snap.exists && snap.value is Map) {
+        Map data = snap.value as Map;
+        String dateStr = (data['date'] ?? '').toString();
+        String label = (data['label'] ?? '2019 National Remedial Exam').toString();
+        DateTime? target = DateTime.tryParse(dateStr);
+        if (target != null && mounted) {
+          int diff = target.difference(DateTime.now()).inDays;
+          setState(() {
+            examDaysLeft = diff >= 0 ? diff : 0;
+            examLabel = label;
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
   Future _checkAppUpdate() async {
     try {
-      final snapshot = await FirebaseDatabase.instance.ref("admin_settings/update").get();
+      final snapshot = await dbRef("admin_settings/update").get();
       if (snapshot.exists) {
         Map data = snapshot.value as Map;
         String latestVersion = (data['version'] ?? APP_VERSION).toString();
@@ -733,7 +943,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       List channels = ['all', isVIP ? 'vip' : 'free'];
 
       for (String target in channels) {
-        final snapshot = await FirebaseDatabase.instance.ref("announcements/$target").get();
+        final snapshot = await dbRef("announcements/$target").get();
         if (snapshot.exists) {
           Map data = snapshot.value as Map;
           int lastTime = prefs.getInt('last_broadcast_$target') ?? 0;
@@ -847,7 +1057,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     String deviceId = prefs.getString('device_id') ?? '';
     String cachedStatus = prefs.getString('local_status') ?? 'free';
     try {
-      final snapshot = await FirebaseDatabase.instance.ref("students/$deviceId/status").get().timeout(const Duration(seconds: 5));
+      final snapshot = await dbRef("students/$deviceId/status").get().timeout(const Duration(seconds: 5));
       if (snapshot.exists) {
         String newStatus = snapshot.value.toString();
         if (cachedStatus == 'vip' && newStatus != 'blocked') {
@@ -855,6 +1065,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         }
         await prefs.setString('local_status', newStatus);
         setState(() => appStatus = newStatus);
+        await _setupPushNotifications(newStatus == 'vip');
         if (newStatus == 'blocked' && mounted) {
           Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const BlockedScreen()));
         }
@@ -876,8 +1087,15 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         userName: userName,
         userStream: userStream,
         todayCourse: todayScheduleCourse,
+        isAdminCached: isAdminCached,
+        examDaysLeft: examDaysLeft,
+        examLabel: examLabel,
         refreshCallback: refreshStatus,
-        onStatusChange: (s) => setState(() => appStatus = s),
+        onStatusChange: (s) {
+          setState(() => appStatus = s);
+          _setupPushNotifications(s == 'vip');
+        },
+        onAdminCached: () => setState(() => isAdminCached = true),
       ),
       StudyScheduleScreen(userStream: userStream),
       ProfileContent(userName: userName, userShortId: userShortId, appStatus: appStatus, userStream: userStream),
@@ -902,8 +1120,15 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           ],
         ),
         actions: [
+          if (isAdminCached)
+            IconButton(
+              icon: const Icon(Icons.admin_panel_settings, color: Colors.greenAccent, size: 26),
+              tooltip: "Direct Admin Panel",
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen())),
+            ),
+          IconButton(icon: const Icon(Icons.share, color: Colors.cyanAccent), tooltip: "Share App", onPressed: () => shareRemedialMatrixApp(context)),
           IconButton(icon: const Icon(Icons.refresh, color: Colors.amber), tooltip: "Refresh Status", onPressed: refreshStatus),
-          if (isVIP) const Padding(padding: EdgeInsets.only(right: 12.0), child: Center(child: Icon(Icons.verified, color: Colors.amber, size: 26)))
+          if (isVIP) const Padding(padding: EdgeInsets.only(right: 10.0), child: Center(child: Icon(Icons.verified, color: Colors.amber, size: 24)))
         ],
       ),
       body: pages[_currentIndex],
@@ -927,8 +1152,12 @@ class HomeContent extends StatelessWidget {
   final String userName;
   final String userStream;
   final String todayCourse;
+  final bool isAdminCached;
+  final int? examDaysLeft;
+  final String examLabel;
   final VoidCallback refreshCallback;
   final Function(String) onStatusChange;
+  final VoidCallback onAdminCached;
 
   const HomeContent({
     Key? key,
@@ -938,8 +1167,12 @@ class HomeContent extends StatelessWidget {
     required this.userName,
     required this.userStream,
     required this.todayCourse,
+    required this.isAdminCached,
+    required this.examDaysLeft,
+    required this.examLabel,
     required this.refreshCallback,
     required this.onStatusChange,
+    required this.onAdminCached,
   }) : super(key: key);
 
   void _showRegistrationStepsGuide(BuildContext context) {
@@ -1104,7 +1337,7 @@ class HomeContent extends StatelessWidget {
                             SharedPreferences prefs = await SharedPreferences.getInstance();
                             String deviceId = prefs.getString('device_id') ?? '';
                             final base64Image = base64Encode(await selectedImage!.readAsBytes());
-                            await FirebaseDatabase.instance.ref("students/$deviceId").update({"status": "pending", "receipt": base64Image});
+                            await dbRef("students/$deviceId").update({"status": "pending", "receipt": base64Image});
                             await prefs.setString('local_status', 'pending');
                             if (context.mounted) {
                               Navigator.pop(context);
@@ -1128,6 +1361,12 @@ class HomeContent extends StatelessWidget {
   }
 
   void _showActivationLogin(BuildContext context) {
+    // አንዴ ፓስወርድህን ካስገባህ በኋላ ባለቤቱ (5053) ቀጥታ ያለ ፓስወርድ ይገባል!
+    if (isAdminCached && isOwnerUser(userShortId, userName)) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen()));
+      return;
+    }
+
     TextEditingController pwdCtrl = TextEditingController();
     showDialog(
       context: context,
@@ -1150,10 +1389,13 @@ class HomeContent extends StatelessWidget {
             onPressed: () async {
               String input = pwdCtrl.text.trim();
               int expectedVipCode = userShortId * 3;
-              bool isOwnerDevice = (userShortId == OWNER_ADMIN_ID) || (userName.toLowerCase().trim() == "mubarek mustefa");
+              bool isOwner = isOwnerUser(userShortId, userName);
 
               if (input == "Matrix@2026") {
-                if (isOwnerDevice) {
+                if (isOwner) {
+                  SharedPreferences prefs = await SharedPreferences.getInstance();
+                  await prefs.setBool('owner_admin_cached', true);
+                  onAdminCached();
                   Navigator.pop(context);
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen()));
                 } else {
@@ -1164,7 +1406,7 @@ class HomeContent extends StatelessWidget {
                 String deviceId = prefs.getString('device_id') ?? '';
                 await prefs.setString('local_status', 'vip');
                 try {
-                  await FirebaseDatabase.instance.ref("students/$deviceId").update({"status": "vip"});
+                  await dbRef("students/$deviceId").update({"status": "vip"});
                 } catch (e) {}
                 onStatusChange('vip');
                 Navigator.pop(context);
@@ -1193,6 +1435,7 @@ class HomeContent extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ዋናው ባነር
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -1226,6 +1469,40 @@ class HomeContent extends StatelessWidget {
               ],
             ),
           ),
+
+          // ⏳ የ2019 ፈተና ቀን ቆጣሪ (ከአድሚን ገጽ ሲሞላ ይታያል)
+          if (examDaysLeft != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF182235),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.cyanAccent.withOpacity(0.5)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("⏳ $examLabel", style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+                        const SizedBox(height: 2),
+                        const Text("በየቀኑ በፕሮግራምዎ መሰረት ይለማመዱ!", style: TextStyle(color: Colors.white60, fontSize: 11.5)),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(10)),
+                    child: Text("$examDaysLeft ቀን ቀረው", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 13)),
+                  )
+                ],
+              ),
+            ),
+          ],
 
           const SizedBox(height: 16),
 
@@ -1273,12 +1550,12 @@ class HomeContent extends StatelessWidget {
             crossAxisCount: 2,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            childAspectRatio: 1.1,
+            childAspectRatio: 1.12,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             children: [
               _buildGridItem(context, "📅 ፕሮግራም & Outline", "2019 All Courses", Icons.calendar_month_rounded, Colors.cyanAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => StudyScheduleScreen(userStream: userStream)))),
-              _buildGridItem(context, "🆕 Model Exams", "2017 & 2018", Icons.library_books_rounded, Colors.blueAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams')))),
+              _buildGridItem(context, "🆕 Model Exams", "2017, 2018 & Live", Icons.library_books_rounded, Colors.blueAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams')))),
               _buildGridItem(context, "📖 Remedial Exams", "Past Papers", Icons.school_rounded, Colors.tealAccent, !isVIP, () {
                 if (!isVIP) _showPremiumDialog(context);
                 else Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'remedial_exams', title: 'Remedial Exams')));
@@ -1291,13 +1568,15 @@ class HomeContent extends StatelessWidget {
                 if (!isVIP) _showPremiumDialog(context);
                 else Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'quizzes', year: '2018', title: 'Quizzes')));
               }),
+              _buildGridItem(context, "🔖 Saved Questions", "Bookmarked Review", Icons.bookmark_rounded, Colors.amberAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SavedQuestionsScreen()))),
+              _buildGridItem(context, "⏱ Study Timer", "Pomodoro 25/5", Icons.timer_rounded, Colors.lightGreenAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PomodoroTimerScreen()))),
               _buildGridItem(context, "📚 Notes & Videos", "Free Samples", Icons.play_lesson_rounded, Colors.redAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SampleMaterialsScreen()))),
               _buildGridItem(context, "🏆 Leaderboard", "Top 10 Students", Icons.emoji_events_rounded, Colors.amber, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeaderboardScreen()))),
               _buildGridItem(context, "💡 Study Tips", "Smart Advice", Icons.lightbulb_rounded, Colors.pinkAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StudyTipsScreen()))),
             ],
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.indigoAccent.shade700,
@@ -1314,7 +1593,18 @@ class HomeContent extends StatelessWidget {
             icon: Icon(isVIP ? Icons.ondemand_video : Icons.lock, color: Colors.white),
             label: const Text("Go to VIP Tutorial Class", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1A3A4A),
+              minimumSize: const Size(double.infinity, 48),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: const BorderSide(color: Colors.cyanAccent, width: 1)),
+            ),
+            onPressed: () => shareRemedialMatrixApp(context),
+            icon: const Icon(Icons.share_rounded, color: Colors.cyanAccent),
+            label: const Text("📤 ለጓደኞችህ አጋራ (Share App)", style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -1340,8 +1630,8 @@ class HomeContent extends StatelessWidget {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () => _showActivationLogin(context),
-                  icon: const Icon(Icons.vpn_key, size: 18),
-                  label: const Text("Code / Admin", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  icon: Icon(isAdminCached ? Icons.admin_panel_settings : Icons.vpn_key, size: 18),
+                  label: Text(isAdminCached ? "Admin Panel" : "Code / Admin", style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -1373,7 +1663,7 @@ class HomeContent extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(color: color.withOpacity(0.15), shape: BoxShape.circle),
-                  child: Icon(icon, size: 30, color: color),
+                  child: Icon(icon, size: 28, color: color),
                 ),
                 if (isLocked)
                   Container(
@@ -1383,13 +1673,258 @@ class HomeContent extends StatelessWidget {
                   ),
               ],
             ),
-            const SizedBox(height: 10),
-            Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
             const SizedBox(height: 2),
-            Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+            Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 10.5)),
           ],
         ),
       ),
+    );
+  }
+}
+
+// ============================================================================
+// ⏱ POMODORO STUDY TIMER (25 MIN STUDY / 5 MIN BREAK)
+// ============================================================================
+class PomodoroTimerScreen extends StatefulWidget {
+  const PomodoroTimerScreen({Key? key}) : super(key: key);
+  @override
+  _PomodoroTimerScreenState createState() => _PomodoroTimerScreenState();
+}
+
+class _PomodoroTimerScreenState extends State<PomodoroTimerScreen> {
+  static const int studySeconds = 25 * 60;
+  static const int breakSeconds = 5 * 60;
+
+  int remaining = studySeconds;
+  bool isStudyMode = true;
+  bool isRunning = false;
+  Timer? _timer;
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _toggleTimer() {
+    if (isRunning) {
+      _timer?.cancel();
+      setState(() => isRunning = false);
+    } else {
+      setState(() => isRunning = true);
+      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (remaining > 0) {
+          if (mounted) setState(() => remaining--);
+        } else {
+          timer.cancel();
+          _showLocalBanner(
+            isStudyMode ? '🎉 የ25 ደቂቃ ጥናት አለቀ!' : '📚 የእረፍት ሰዓት አለቀ!',
+            isStudyMode ? 'አሁን ለ5 ደቂቃ እረፍት ይውሰዱ!' : 'ቀጣዩን የ25 ደቂቃ ጥናት ይጀምሩ!',
+            id: 777,
+          );
+          if (mounted) {
+            setState(() {
+              isRunning = false;
+              isStudyMode = !isStudyMode;
+              remaining = isStudyMode ? studySeconds : breakSeconds;
+            });
+          }
+        }
+      });
+    }
+  }
+
+  void _resetTimer() {
+    _timer?.cancel();
+    setState(() {
+      isRunning = false;
+      remaining = isStudyMode ? studySeconds : breakSeconds;
+    });
+  }
+
+  void _switchMode(bool study) {
+    _timer?.cancel();
+    setState(() {
+      isRunning = false;
+      isStudyMode = study;
+      remaining = study ? studySeconds : breakSeconds;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    int total = isStudyMode ? studySeconds : breakSeconds;
+    double progress = remaining / total;
+    int m = remaining ~/ 60;
+    int s = remaining % 60;
+    String timeStr = '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+
+    return Scaffold(
+      appBar: AppBar(title: const Text("⏱ Pomodoro Study Timer")),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ChoiceChip(
+                  label: const Text("📚 25 min Study"),
+                  selected: isStudyMode,
+                  selectedColor: Colors.amber,
+                  labelStyle: TextStyle(color: isStudyMode ? Colors.black : Colors.white, fontWeight: FontWeight.bold),
+                  onSelected: (_) => _switchMode(true),
+                ),
+                const SizedBox(width: 12),
+                ChoiceChip(
+                  label: const Text("☕ 5 min Break"),
+                  selected: !isStudyMode,
+                  selectedColor: Colors.greenAccent,
+                  labelStyle: TextStyle(color: !isStudyMode ? Colors.black : Colors.white, fontWeight: FontWeight.bold),
+                  onSelected: (_) => _switchMode(false),
+                ),
+              ],
+            ),
+            const SizedBox(height: 40),
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox(
+                  height: 220,
+                  width: 220,
+                  child: CircularProgressIndicator(
+                    value: progress,
+                    strokeWidth: 12,
+                    backgroundColor: Colors.white12,
+                    valueColor: AlwaysStoppedAnimation<Color>(isStudyMode ? Colors.amber : Colors.greenAccent),
+                  ),
+                ),
+                Column(
+                  children: [
+                    Text(timeStr, style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Colors.white)),
+                    Text(isStudyMode ? "Focus Time" : "Break Time", style: const TextStyle(color: Colors.white60, fontSize: 15)),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 45),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isRunning ? Colors.orange : Colors.green,
+                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  onPressed: _toggleTimer,
+                  icon: Icon(isRunning ? Icons.pause : Icons.play_arrow, color: Colors.white),
+                  label: Text(isRunning ? "Pause" : "Start", style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(width: 16),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white70,
+                    side: const BorderSide(color: Colors.white30),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  onPressed: _resetTimer,
+                  icon: const Icon(Icons.replay),
+                  label: const Text("Reset"),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 🔖 SAVED / BOOKMARKED QUESTIONS SCREEN
+// ============================================================================
+class SavedQuestionsScreen extends StatefulWidget {
+  const SavedQuestionsScreen({Key? key}) : super(key: key);
+  @override
+  _SavedQuestionsScreenState createState() => _SavedQuestionsScreenState();
+}
+
+class _SavedQuestionsScreenState extends State<SavedQuestionsScreen> {
+  List saved = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSaved();
+  }
+
+  Future _loadSaved() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String raw = prefs.getString('bookmarked_questions') ?? '[]';
+    try {
+      setState(() => saved = jsonDecode(raw));
+    } catch (_) {}
+  }
+
+  Future _removeBookmark(int idx) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() => saved.removeAt(idx));
+    await prefs.setString('bookmarked_questions', jsonEncode(saved));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("🔖 Saved Questions")),
+      body: saved.isEmpty
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24.0),
+                child: Text("እስካሁን የተቀመጠ ጥያቄ የለም!\nፈተና ሲሰሩ የከበደዎትን ጥያቄ ከላይ ያለውን ⭐ ምልክት ነክተው ማስቀመጥ ይችላሉ።", textAlign: TextAlign.center, style: TextStyle(color: Colors.white60, height: 1.5)),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: saved.length,
+              itemBuilder: (c, i) {
+                Map q = saved[i] as Map;
+                List opts = (q['options'] is List) ? q['options'] : [];
+                int correctId = int.tryParse(q['correct_option_id']?.toString() ?? '0') ?? 0;
+                return Card(
+                  color: const Color(0xFF181B28),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("📘 ${q['subject'] ?? 'Subject'}", style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 12.5)),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                              onPressed: () => _removeBookmark(i),
+                            )
+                          ],
+                        ),
+                        Text((q['question'] ?? '').toString(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15.5)),
+                        const SizedBox(height: 8),
+                        if (opts.length > correctId)
+                          Text("✅ መልስ: ${opts[correctId]}", style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 6),
+                        Text("💡 ${(q['explanation'] ?? 'ማብራሪያ የለውም').toString()}", style: const TextStyle(color: Colors.amber, fontSize: 13)),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }
@@ -1422,7 +1957,7 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
     Map defaultMap = Map.from(getDefaultSchedule()[selectedStream] ?? {});
 
     try {
-      final snap = await FirebaseDatabase.instance.ref("admin_content/schedule/$selectedStream").get().timeout(const Duration(seconds: 4));
+      final snap = await dbRef("admin_content/schedule/$selectedStream").get().timeout(const Duration(seconds: 4));
       if (snap.exists && snap.value is Map) {
         Map remote = snap.value as Map;
         remote.forEach((k, v) {
@@ -1597,42 +2132,115 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
   }
 }
 
-class ProfileContent extends StatelessWidget {
+// ============================================================================
+// 👤 PROFILE + PERFORMANCE ANALYTICS
+// ============================================================================
+class ProfileContent extends StatefulWidget {
   final String userName;
   final int userShortId;
   final String appStatus;
   final String userStream;
   const ProfileContent({Key? key, required this.userName, required this.userShortId, required this.appStatus, required this.userStream}) : super(key: key);
+
+  @override
+  _ProfileContentState createState() => _ProfileContentState();
+}
+
+class _ProfileContentState extends State<ProfileContent> {
+  Map subjectStats = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAnalytics();
+  }
+
+  Future _loadAnalytics() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String raw = prefs.getString('subject_analytics') ?? '{}';
+    try {
+      setState(() => subjectStats = jsonDecode(raw));
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
-    bool isVip = appStatus == 'vip';
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircleAvatar(
-              radius: 52,
-              backgroundColor: isVip ? Colors.amber : Colors.blueGrey,
-              child: Icon(isVip ? Icons.workspace_premium : Icons.person, size: 55, color: Colors.black),
-            ),
-            const SizedBox(height: 20),
-            Text(userName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
-            const SizedBox(height: 6),
-            Text("Stream: $userStream Science", style: const TextStyle(fontSize: 14, color: Colors.cyanAccent)),
-            const SizedBox(height: 14),
+    bool isVip = widget.appStatus == 'vip';
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20.0),
+      child: Column(
+        children: [
+          const SizedBox(height: 10),
+          CircleAvatar(
+            radius: 48,
+            backgroundColor: isVip ? Colors.amber : Colors.blueGrey,
+            child: Icon(isVip ? Icons.workspace_premium : Icons.person, size: 50, color: Colors.black),
+          ),
+          const SizedBox(height: 16),
+          Text(widget.userName, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 4),
+          Text("Stream: ${widget.userStream} Science", style: const TextStyle(fontSize: 14, color: Colors.cyanAccent)),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            decoration: BoxDecoration(color: const Color(0xFF181B28), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.amber.withOpacity(0.5))),
+            child: Text("Student ID: ${widget.userShortId}", style: const TextStyle(fontSize: 17, color: Colors.greenAccent, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+          ),
+          const SizedBox(height: 10),
+          Text("Account Status: ${widget.appStatus.toUpperCase()}  |  v$APP_VERSION", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: isVip ? Colors.amber : Colors.white70)),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.cyanAccent.shade700, minimumSize: const Size(double.infinity, 46)),
+            onPressed: () => shareRemedialMatrixApp(context),
+            icon: const Icon(Icons.share, color: Colors.black),
+            label: const Text("📤 ለጓደኞችህ አጋራ (Share App)", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(height: 24),
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text("📊 የጥናት ውጤት ትንታኔ (Performance Analytics)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.amber)),
+          ),
+          const SizedBox(height: 10),
+          if (subjectStats.isEmpty)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(color: const Color(0xFF181B28), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.amber.withOpacity(0.5))),
-              child: Text("Student ID: $userShortId", style: const TextStyle(fontSize: 18, color: Colors.greenAccent, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-            ),
-            const SizedBox(height: 12),
-            Text("Account Status: ${appStatus.toUpperCase()}", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: isVip ? Colors.amber : Colors.white70)),
-            const SizedBox(height: 8),
-            const Text("App Version: $APP_VERSION", style: TextStyle(fontSize: 12, color: Colors.white38)),
-          ],
-        ),
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: const Color(0xFF181B28), borderRadius: BorderRadius.circular(14)),
+              child: const Text("ፈተናዎችን ሲሰሩ የእያንዳንዱ ትምህርት ውጤትዎ በፐርሰንት እዚህ ይታያል!", style: TextStyle(color: Colors.white60, fontSize: 13)),
+            )
+          else
+            ...subjectStats.entries.map((entry) {
+              String sub = entry.key.toString();
+              Map st = entry.value as Map;
+              int correct = st['correct'] ?? 0;
+              int total = st['total'] ?? 1;
+              double ratio = (correct / total).clamp(0.0, 1.0);
+              int pct = (ratio * 100).toInt();
+              Color barColor = pct >= 70 ? Colors.greenAccent : (pct >= 50 ? Colors.amber : Colors.redAccent);
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: const Color(0xFF181B28), borderRadius: BorderRadius.circular(12)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(sub, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        Text("$pct% ($correct/$total)", style: TextStyle(color: barColor, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(value: ratio, minHeight: 8, backgroundColor: Colors.white12, valueColor: AlwaysStoppedAnimation<Color>(barColor)),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+        ],
       ),
     );
   }
@@ -1656,7 +2264,7 @@ class _StudyTipsScreenState extends State<StudyTipsScreen> {
 
   Future fetchTips() async {
     try {
-      final snap = await FirebaseDatabase.instance.ref("admin_content/study_tips").get();
+      final snap = await dbRef("admin_content/study_tips").get();
       if (snap.exists) {
         List temp = [];
         (snap.value as Map).forEach((k, v) => temp.add(Map.from(v)));
@@ -1720,7 +2328,7 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
 
   Future fetchMaterials() async {
     try {
-      final snap = await FirebaseDatabase.instance.ref("admin_content/sample_materials").get();
+      final snap = await dbRef("admin_content/sample_materials").get();
       if (snap.exists) {
         List temp = [];
         (snap.value as Map).forEach((k, v) => temp.add(Map.from(v)));
@@ -1769,58 +2377,389 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
   }
 }
 
-class AdminDashboardScreen extends StatelessWidget {
+// ============================================================================
+// 🛠 ADMIN DASHBOARD (LIVE STATS + BACKUP + LIVE QUESTIONS + EXAM COUNTDOWN)
+// ============================================================================
+class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({Key? key}) : super(key: key);
+  @override
+  _AdminDashboardScreenState createState() => _AdminDashboardScreenState();
+}
+
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  int totalCount = 0;
+  int vipCount = 0;
+  int pendingCount = 0;
+  int freeCount = 0;
+  int blockedCount = 0;
+  int naturalCount = 0;
+  int socialCount = 0;
+  bool loadingStats = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStats();
+  }
+
+  Future _loadStats() async {
+    setState(() => loadingStats = true);
+    try {
+      final snap = await dbRef("students").get();
+      int total = 0, vip = 0, pending = 0, free = 0, blocked = 0, nat = 0, soc = 0;
+      if (snap.exists && snap.value is Map) {
+        (snap.value as Map).forEach((k, v) {
+          if (v is Map) {
+            total++;
+            String st = (v['status'] ?? 'free').toString().toLowerCase();
+            if (st == 'vip') vip++;
+            else if (st == 'pending') pending++;
+            else if (st == 'blocked') blocked++;
+            else free++;
+
+            String stream = (v['stream'] ?? '').toString().toLowerCase();
+            if (stream.contains('social')) soc++;
+            else nat++;
+          }
+        });
+      }
+      if (mounted) {
+        setState(() {
+          totalCount = total;
+          vipCount = vip;
+          pendingCount = pending;
+          freeCount = free;
+          blockedCount = blocked;
+          naturalCount = nat;
+          socialCount = soc;
+          loadingStats = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => loadingStats = false);
+    }
+  }
+
+  Future _exportBackup() async {
+    try {
+      final snap = await dbRef("students").get();
+      if (!snap.exists || snap.value == null) return;
+      Map cleanBackup = {};
+      (snap.value as Map).forEach((k, v) {
+        if (v is Map) {
+          Map copy = Map.from(v);
+          copy.remove('receipt'); // base64 images omitted for fast clean backup
+          cleanBackup[k.toString()] = copy;
+        }
+      });
+      String jsonText = jsonEncode({"students": cleanBackup});
+      await Clipboard.setData(ClipboardData(text: jsonText));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("✅ የሁሉም ተማሪዎች ዳታ ባክአፕ Copy ተደርጓል! ቴሌግራም Saved Messages ላይ ሴቭ አድርገው።"), backgroundColor: Colors.green),
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _showExamCountdownDialog() {
+    TextEditingController dateCtrl = TextEditingController(text: "2027-06-15");
+    TextEditingController labelCtrl = TextEditingController(text: "2019 National Remedial Exam");
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E2235),
+        title: const Text("⏳ የፈተና ቀን ቆጣሪ (Countdown)", style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: labelCtrl, decoration: const InputDecoration(labelText: "ርዕስ (Label)")),
+            const SizedBox(height: 10),
+            TextField(controller: dateCtrl, decoration: const InputDecoration(labelText: "ቀን (YYYY-MM-DD)", hintText: "2027-06-15")),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+          ElevatedButton(
+            onPressed: () async {
+              await dbRef("admin_settings/exam_countdown").set({
+                "date": dateCtrl.text.trim(),
+                "label": labelCtrl.text.trim(),
+              });
+              if (context.mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ የፈተና ቀን ቆጣሪ ተቀምጧል!"), backgroundColor: Colors.green));
+              }
+            },
+            child: const Text("Save"),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _statBox(String label, String value, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF181B28),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(0.45)),
+        ),
+        child: Column(
+          children: [
+            Text(value, style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11.5), textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("🛠 Admin Control Center")),
+      appBar: AppBar(
+        title: const Text("🛠 Admin Control Center"),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh, color: Colors.amber), onPressed: _loadStats),
+        ],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            // 📊 LIVE ADMIN STATISTICS
+            if (loadingStats)
+              const Padding(padding: EdgeInsets.all(16.0), child: CircularProgressIndicator(color: Colors.amber))
+            else ...[
+              Row(
+                children: [
+                  _statBox("ጠቅላላ ተማሪ", "$totalCount", Colors.cyanAccent),
+                  const SizedBox(width: 8),
+                  _statBox("👑 VIP", "$vipCount", Colors.amber),
+                  const SizedBox(width: 8),
+                  _statBox("⏳ Pending", "$pendingCount", Colors.orangeAccent),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _statBox("🆓 Free", "$freeCount", Colors.lightBlueAccent),
+                  const SizedBox(width: 8),
+                  _statBox("🔬 Nat / 🌍 Soc", "$naturalCount / $socialCount", Colors.greenAccent),
+                  const SizedBox(width: 8),
+                  _statBox("🚫 Blocked", "$blockedCount", Colors.redAccent),
+                ],
+              ),
+            ],
+            const SizedBox(height: 18),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.amber, minimumSize: const Size(double.infinity, 52)),
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminReceiptsScreen())),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.amber, minimumSize: const Size(double.infinity, 50)),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminReceiptsScreen())).then((_) => _loadStats()),
               icon: const Icon(Icons.receipt_long, color: Colors.black),
-              label: const Text("📥 አዲስ ደረሰኞችን አረጋግጥ (Receipts)", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              label: Text("📥 አዲስ ደረሰኞችን አረጋግጥ ($pendingCount Pending)", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.blueAccent, minimumSize: const Size(double.infinity, 52)),
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminStudentListScreen())),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.blueAccent, minimumSize: const Size(double.infinity, 50)),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminStudentListScreen())).then((_) => _loadStats()),
               icon: const Icon(Icons.group, color: Colors.white),
-              label: const Text("👥 የተመዘገቡ ተማሪዎች (Filter/Ban/VIP)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              label: const Text("👥 የተመዘገቡ ተማሪዎች (Search / Filter / VIP)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.teal, minimumSize: const Size(double.infinity, 52)),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.indigo, minimumSize: const Size(double.infinity, 50)),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminAddQuestionScreen())),
+              icon: const Icon(Icons.add_circle_outline, color: Colors.white),
+              label: const Text("➕ አዲስ ጥያቄ በቀጥታ ጫን (Live Question)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.teal, minimumSize: const Size(double.infinity, 50)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminScheduleManagerScreen())),
               icon: const Icon(Icons.calendar_month, color: Colors.white),
               label: const Text("📅 የ2019 ፕሮግራም & የዕለቱ ማሳሰቢያ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.orange.shade800, minimumSize: const Size(double.infinity, 52)),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.orange.shade800, minimumSize: const Size(double.infinity, 50)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminBroadcastScreen())),
               icon: const Icon(Icons.campaign, color: Colors.white),
               label: const Text("📢 ማስታወቂያ ላክ (ለVIP / ለFree / ለሁሉም)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.green, minimumSize: const Size(double.infinity, 52)),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.green, minimumSize: const Size(double.infinity, 50)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminContentScreen())),
               icon: const Icon(Icons.edit_document, color: Colors.white),
               label: const Text("✍️ ኮንቴንት ጨምር (Tips & Materials)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.purpleAccent, minimumSize: const Size(double.infinity, 52)),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.purpleAccent, minimumSize: const Size(double.infinity, 50)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminUpdateAppScreen())),
               icon: const Icon(Icons.system_update, color: Colors.white),
-              label: const Text("🚀 አዲስ አፕሊኬሽን (1xBet-Style Update) ልቀቅ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              label: const Text("🚀 አዲስ Update (1xBet-Style) ልቀቅ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.cyanAccent, side: const BorderSide(color: Colors.cyanAccent), padding: const EdgeInsets.symmetric(vertical: 14)),
+                    onPressed: _showExamCountdownDialog,
+                    icon: const Icon(Icons.timer, size: 18),
+                    label: const Text("Exam Countdown", style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.amber, side: const BorderSide(color: Colors.amber), padding: const EdgeInsets.symmetric(vertical: 14)),
+                    onPressed: _exportBackup,
+                    icon: const Icon(Icons.backup, size: 18),
+                    label: const Text("Backup Students", style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// ➕ LIVE QUESTION UPLOADER (APK ሳትሰራ በቀጥታ ጥያቄ መጨመሪያ)
+// ============================================================================
+class AdminAddQuestionScreen extends StatefulWidget {
+  const AdminAddQuestionScreen({Key? key}) : super(key: key);
+  @override
+  _AdminAddQuestionScreenState createState() => _AdminAddQuestionScreenState();
+}
+
+class _AdminAddQuestionScreenState extends State<AdminAddQuestionScreen> {
+  String examType = 'model_exams';
+  String year = '2018';
+  String subject = 'Biology';
+  int correctIndex = 0;
+  bool isSaving = false;
+
+  final qCtrl = TextEditingController();
+  final aCtrl = TextEditingController();
+  final bCtrl = TextEditingController();
+  final cCtrl = TextEditingController();
+  final dCtrl = TextEditingController();
+  final expCtrl = TextEditingController();
+
+  final List<String> subjects = ["Biology", "Chemistry", "Physics", "Mathematics", "English", "History", "Geography"];
+
+  Future _saveQuestion() async {
+    if (qCtrl.text.trim().isEmpty || aCtrl.text.trim().isEmpty || bCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("እባክዎ ጥያቄውን እና ምርጫዎቹን ይሙሉ!"), backgroundColor: Colors.red));
+      return;
+    }
+    setState(() => isSaving = true);
+    try {
+      await dbRef("live_questions/$examType/$year/$subject").push().set({
+        "question": qCtrl.text.trim(),
+        "options": [aCtrl.text.trim(), bCtrl.text.trim(), cCtrl.text.trim(), dCtrl.text.trim()],
+        "correct_option_id": correctIndex,
+        "explanation": expCtrl.text.trim().isNotEmpty ? expCtrl.text.trim() : "ማብራሪያ የለውም።",
+      });
+      if (mounted) {
+        qCtrl.clear();
+        aCtrl.clear();
+        bCtrl.clear();
+        cCtrl.clear();
+        dCtrl.clear();
+        expCtrl.clear();
+        setState(() => isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ ጥያቄው በቀጥታ ወደ አፑ ተጭኗል!"), backgroundColor: Colors.green));
+      }
+    } catch (_) {
+      if (mounted) setState(() => isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("➕ Live Question Uploader")),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: examType,
+                    dropdownColor: const Color(0xFF1E2235),
+                    decoration: const InputDecoration(labelText: "Type", border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(value: 'model_exams', child: Text("Model Exams")),
+                      DropdownMenuItem(value: 'remedial_exams', child: Text("Remedial Exams")),
+                    ],
+                    onChanged: (v) => setState(() => examType = v ?? 'model_exams'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: year,
+                    dropdownColor: const Color(0xFF1E2235),
+                    decoration: const InputDecoration(labelText: "Year", border: OutlineInputBorder()),
+                    items: ['2015', '2016', '2017', '2018', '2019'].map((y) => DropdownMenuItem(value: y, child: Text(y))).toList(),
+                    onChanged: (v) => setState(() => year = v ?? '2018'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: subject,
+              dropdownColor: const Color(0xFF1E2235),
+              decoration: const InputDecoration(labelText: "Subject", border: OutlineInputBorder()),
+              items: subjects.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+              onChanged: (v) => setState(() => subject = v ?? 'Biology'),
+            ),
+            const SizedBox(height: 12),
+            TextField(controller: qCtrl, maxLines: 3, decoration: const InputDecoration(labelText: "ጥያቄ (Question)", border: OutlineInputBorder())),
+            const SizedBox(height: 10),
+            TextField(controller: aCtrl, decoration: const InputDecoration(labelText: "Option A", border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: bCtrl, decoration: const InputDecoration(labelText: "Option B", border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: cCtrl, decoration: const InputDecoration(labelText: "Option C", border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: dCtrl, decoration: const InputDecoration(labelText: "Option D", border: OutlineInputBorder())),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              value: correctIndex,
+              dropdownColor: const Color(0xFF1E2235),
+              decoration: const InputDecoration(labelText: "ትክክለኛው መልስ (Correct Option)", border: OutlineInputBorder()),
+              items: const [
+                DropdownMenuItem(value: 0, child: Text("Option A")),
+                DropdownMenuItem(value: 1, child: Text("Option B")),
+                DropdownMenuItem(value: 2, child: Text("Option C")),
+                DropdownMenuItem(value: 3, child: Text("Option D")),
+              ],
+              onChanged: (v) => setState(() => correctIndex = v ?? 0),
+            ),
+            const SizedBox(height: 12),
+            TextField(controller: expCtrl, maxLines: 3, decoration: const InputDecoration(labelText: "ማብራሪያ (Explanation)", border: OutlineInputBorder())),
+            const SizedBox(height: 18),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, minimumSize: const Size(double.infinity, 52)),
+              onPressed: isSaving ? null : _saveQuestion,
+              icon: const Icon(Icons.cloud_upload, color: Colors.white),
+              label: isSaving ? const CircularProgressIndicator(color: Colors.white) : const Text("ጥያቄውን ጫን (Upload Question)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            )
           ],
         ),
       ),
@@ -1855,7 +2794,7 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
     setState(() => isSaving = true);
     try {
       String courseText = courseCtrl.text.trim();
-      await FirebaseDatabase.instance.ref("admin_content/schedule/$selectedStream/$selectedDay").set(courseText);
+      await dbRef("admin_content/schedule/$selectedStream/$selectedDay").set(courseText);
 
       if (sendPushAlert) {
         int now = DateTime.now().millisecondsSinceEpoch;
@@ -1864,8 +2803,8 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
           "message": "ውድ የ $selectedStream ተማሪዎች፣ የዛሬው የ2019 ሪሚዲያል የጥናት ፕሮግራም፦\n\n【 $courseText 】\n\nዛሬ ይህንን ኮርስ አንብበዋል? ካላነበቡ አሁኑኑ ይጀምሩ!",
           "time": now,
         };
-        await FirebaseDatabase.instance.ref("announcements/all").set(alertData);
-        await FirebaseDatabase.instance.ref("announcement").set(alertData);
+        await dbRef("announcements/all").set(alertData);
+        await dbRef("announcement").set(alertData);
       }
 
       if (mounted) {
@@ -2040,9 +2979,9 @@ class _AdminBroadcastScreenState extends State<AdminBroadcastScreen> {
         "target": targetAudience,
         "time": now,
       };
-      await FirebaseDatabase.instance.ref("announcements/$targetAudience").set(payload);
+      await dbRef("announcements/$targetAudience").set(payload);
       if (targetAudience == 'all') {
-        await FirebaseDatabase.instance.ref("announcement").set(payload);
+        await dbRef("announcement").set(payload);
       }
       if (mounted) {
         setState(() => isSending = false);
@@ -2088,7 +3027,12 @@ class _AdminBroadcastScreenState extends State<AdminBroadcastScreen> {
               onPressed: isSending ? null : sendBroadcast,
               icon: const Icon(Icons.send, color: Colors.white),
               label: isSending ? const CircularProgressIndicator(color: Colors.white) : const Text("ማስታወቂያውን ላክ (Send Broadcast)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            )
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              "💡 አፑ ዝግ ሆኖ ከውጭ (Notification Bar) ለመላክ Firebase Console -> Messaging ውስጥ Topic ላይ 'all_students', 'vip_students' ወይም 'free_students' ብለህ ላክ!",
+              style: TextStyle(color: Colors.white60, fontSize: 12.5, height: 1.4),
+            ),
           ],
         ),
       ),
@@ -2132,7 +3076,7 @@ class AdminContentScreen extends StatelessWidget {
           ElevatedButton(
             onPressed: () async {
               if (titleCtrl.text.isNotEmpty && contentCtrl.text.isNotEmpty) {
-                await FirebaseDatabase.instance.ref("admin_content/study_tips").push().set({"title": titleCtrl.text, "content": contentCtrl.text, "time": DateTime.now().millisecondsSinceEpoch});
+                await dbRef("admin_content/study_tips").push().set({"title": titleCtrl.text, "content": contentCtrl.text, "time": DateTime.now().millisecondsSinceEpoch});
                 if (context.mounted) {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ተጨምሯል!")));
@@ -2172,7 +3116,7 @@ class AdminContentScreen extends StatelessWidget {
             ElevatedButton(
               onPressed: () async {
                 if (titleCtrl.text.isNotEmpty && urlCtrl.text.isNotEmpty) {
-                  await FirebaseDatabase.instance.ref("admin_content/sample_materials").push().set({"title": titleCtrl.text, "url": urlCtrl.text, "type": mType, "time": DateTime.now().millisecondsSinceEpoch});
+                  await dbRef("admin_content/sample_materials").push().set({"title": titleCtrl.text, "url": urlCtrl.text, "type": mType, "time": DateTime.now().millisecondsSinceEpoch});
                   if (context.mounted) {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ተጨምሯል!")));
@@ -2192,20 +3136,20 @@ class AdminUpdateAppScreen extends StatelessWidget {
   const AdminUpdateAppScreen({Key? key}) : super(key: key);
   @override
   Widget build(BuildContext context) {
-    TextEditingController verCtrl = TextEditingController(text: "1.1.0");
+    TextEditingController verCtrl = TextEditingController(text: "1.2.0");
     TextEditingController urlCtrl = TextEditingController(text: DEFAULT_DIRECT_APK_URL);
-    TextEditingController whatsNewCtrl = TextEditingController(text: "• የ2019 ሙሉ Course Outline እና የጥናት ፕሮግራም ተካቷል\n• አውቶማቲክ የVIP አካውንት መመለሻ\n• የተሻሻለ ፍጥነት እና ዲዛይን");
+    TextEditingController whatsNewCtrl = TextEditingController(text: "• ውጫዊ Notification እና የዕለቱ ጥናት ማሳሰቢያ\n• የጥያቄ Bookmark፣ Pomodoro Timer እና Analytics\n• 1xBet-Style ቀጥታ Update እና ቀላል Share App");
 
     return Scaffold(
       appBar: AppBar(title: const Text("🚀 1xBet-Style Update ልቀቅ")),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(children: [
-          const Text("ይህንን ስትጫን ተማሪዎች ወደ ቴሌግራም መሄድ ሳያስፈልጋቸው፣ ልክ እንደ 1xBet እዛው አፑ ውስጥ በፐርሰንት ቆጥሮ በራሱ ላይ Update ያደርግላቸዋል!", style: TextStyle(color: Colors.amber)),
+          const Text("ይህንን ስትጫን የድሮውን አፕ (V1.0.0 / V1.1.0) ለያዙም ሆነ ለአዲሱ V1.2.0 ተማሪዎች ወዲያውኑ የUpdate ማሳወቂያ ይደርሳቸዋል!", style: TextStyle(color: Colors.amber)),
           const SizedBox(height: 20),
           TextField(controller: verCtrl, decoration: const InputDecoration(labelText: "አዲሱ ቨርሽን (ምሳሌ: 1.2.0)", border: OutlineInputBorder())),
           const SizedBox(height: 15),
-          TextField(controller: urlCtrl, decoration: const InputDecoration(labelText: "Direct APK Download URL (GitHub Release)", border: OutlineInputBorder())),
+          TextField(controller: urlCtrl, decoration: const InputDecoration(labelText: "Direct APK Download URL (Remedial-Updates)", border: OutlineInputBorder())),
           const SizedBox(height: 15),
           TextField(controller: whatsNewCtrl, maxLines: 4, decoration: const InputDecoration(labelText: "What's new? (ምን አዲስ ነገር ተጨመረ?)", border: OutlineInputBorder())),
           const SizedBox(height: 20),
@@ -2213,18 +3157,18 @@ class AdminUpdateAppScreen extends StatelessWidget {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, minimumSize: const Size(double.infinity, 52)),
             onPressed: () async {
               if (verCtrl.text.isNotEmpty && urlCtrl.text.isNotEmpty) {
-                await FirebaseDatabase.instance.ref("admin_settings/update").set({
+                await dbRef("admin_settings/update").set({
                   "version": verCtrl.text.trim(),
                   "url": urlCtrl.text.trim(),
                   "whats_new": whatsNewCtrl.text.trim(),
                 });
                 if (context.mounted) {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ የIn-App Update ትዕዛዝ ለሁሉም ተማሪዎች ተልኳል!"), backgroundColor: Colors.green));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ የUpdate ትዕዛዝ ለሁሉም ተማሪዎች ተልኳል!"), backgroundColor: Colors.green));
                 }
               }
             },
-            child: const Text("ለተማሪዎች አሳውቅ (Push In-App Update)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: const Text("ለተማሪዎች አሳውቅ (Push Update)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           )
         ]),
       ),
@@ -2232,6 +3176,7 @@ class AdminUpdateAppScreen extends StatelessWidget {
   }
 }
 
+// 👥 ADMIN STUDENT LIST WITH SEARCH BAR + FILTER
 class AdminStudentListScreen extends StatefulWidget {
   const AdminStudentListScreen({Key? key}) : super(key: key);
   @override
@@ -2243,6 +3188,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
   List displayedStudents = [];
   bool isLoading = true;
   String currentFilter = 'All';
+  String searchQuery = '';
 
   @override
   void initState() {
@@ -2252,7 +3198,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
 
   Future fetchStudents() async {
     try {
-      final snap = await FirebaseDatabase.instance.ref("students").get();
+      final snap = await dbRef("students").get();
       if (snap.exists) {
         List temp = [];
         (snap.value as Map).forEach((k, v) {
@@ -2274,13 +3220,19 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
   }
 
   void _applyFilter() {
-    if (currentFilter == 'All') displayedStudents = List.from(allStudents);
-    else displayedStudents = allStudents.where((s) => s['status'].toString().toLowerCase() == currentFilter.toLowerCase()).toList();
+    displayedStudents = allStudents.where((s) {
+      bool statusOk = currentFilter == 'All' || s['status'].toString().toLowerCase() == currentFilter.toLowerCase();
+      if (!statusOk) return false;
+      if (searchQuery.isEmpty) return true;
+      String name = (s['full_name'] ?? '').toString().toLowerCase();
+      String id = (s['short_id'] ?? '').toString().toLowerCase();
+      return name.contains(searchQuery.toLowerCase()) || id.contains(searchQuery.toLowerCase());
+    }).toList();
   }
 
   Future updateStudentStatus(String deviceId, String newStatus) async {
     try {
-      await FirebaseDatabase.instance.ref("students/$deviceId").update({"status": newStatus});
+      await dbRef("students/$deviceId").update({"status": newStatus});
       fetchStudents();
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("ስቴተስ ወደ $newStatus ተቀይሯል!")));
     } catch (e) {}
@@ -2289,7 +3241,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("ተማሪዎች"), actions: [
+      appBar: AppBar(title: Text("ተማሪዎች (${displayedStudents.length})"), actions: [
         PopupMenuButton(
           icon: const Icon(Icons.filter_list),
           onSelected: (val) {
@@ -2301,35 +3253,59 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
           itemBuilder: (context) => ['All', 'VIP', 'Pending', 'Free', 'Blocked'].map((e) => PopupMenuItem(value: e, child: Text(e))).toList(),
         )
       ]),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : displayedStudents.isEmpty
-              ? Center(child: Text("በ '$currentFilter' የተገኘ ተማሪ የለም!"))
-              : ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: displayedStudents.length,
-                  itemBuilder: (c, i) {
-                    var s = displayedStudents[i];
-                    bool isVip = s['status'] == 'vip';
-                    bool isBlocked = s['status'] == 'blocked';
-                    return Card(
-                      color: const Color(0xFF181B28),
-                      margin: const EdgeInsets.only(bottom: 10),
-                      child: ListTile(
-                        leading: CircleAvatar(backgroundColor: isBlocked ? Colors.red : (isVip ? Colors.amber : Colors.blueGrey), child: Icon(isBlocked ? Icons.block : Icons.person, color: Colors.black)),
-                        title: Text(s['full_name'] ?? 'Unknown', style: TextStyle(color: isBlocked ? Colors.redAccent : Colors.white, fontWeight: FontWeight.bold)),
-                        subtitle: Text("ID: ${s['short_id']} | Code: ${(s['short_id'] ?? 0) * 3}\nStatus: ${s['status']}", style: const TextStyle(color: Colors.white70)),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (!isVip) IconButton(icon: const Icon(Icons.verified, color: Colors.amber), onPressed: () => updateStudentStatus(s['device_id'], 'vip')),
-                            IconButton(icon: Icon(isBlocked ? Icons.lock_open : Icons.block, color: isBlocked ? Colors.green : Colors.red), onPressed: () => updateStudentStatus(s['device_id'], isBlocked ? 'free' : 'blocked')),
-                          ],
-                        ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: TextField(
+              onChanged: (val) {
+                setState(() {
+                  searchQuery = val.trim();
+                  _applyFilter();
+                });
+              },
+              decoration: InputDecoration(
+                hintText: "በስም ወይም በID ፈልግ (Search)...",
+                prefixIcon: const Icon(Icons.search, color: Colors.amber),
+                filled: true,
+                fillColor: const Color(0xFF181B28),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+            ),
+          ),
+          Expanded(
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : displayedStudents.isEmpty
+                    ? Center(child: Text("በ '$currentFilter' የተገኘ ተማሪ የለም!"))
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: displayedStudents.length,
+                        itemBuilder: (c, i) {
+                          var s = displayedStudents[i];
+                          bool isVip = s['status'] == 'vip';
+                          bool isBlocked = s['status'] == 'blocked';
+                          return Card(
+                            color: const Color(0xFF181B28),
+                            margin: const EdgeInsets.only(bottom: 10),
+                            child: ListTile(
+                              leading: CircleAvatar(backgroundColor: isBlocked ? Colors.red : (isVip ? Colors.amber : Colors.blueGrey), child: Icon(isBlocked ? Icons.block : Icons.person, color: Colors.black)),
+                              title: Text(s['full_name'] ?? 'Unknown', style: TextStyle(color: isBlocked ? Colors.redAccent : Colors.white, fontWeight: FontWeight.bold)),
+                              subtitle: Text("ID: ${s['short_id']} | Code: ${(s['short_id'] ?? 0) * 3}\nStream: ${s['stream'] ?? '-'} | Status: ${s['status']}", style: const TextStyle(color: Colors.white70)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (!isVip) IconButton(icon: const Icon(Icons.verified, color: Colors.amber), onPressed: () => updateStudentStatus(s['device_id'], 'vip')),
+                                  IconButton(icon: Icon(isBlocked ? Icons.lock_open : Icons.block, color: isBlocked ? Colors.green : Colors.red), onPressed: () => updateStudentStatus(s['device_id'], isBlocked ? 'free' : 'blocked')),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2352,7 +3328,7 @@ class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
 
   Future fetchReceipts() async {
     try {
-      final snap = await FirebaseDatabase.instance.ref("students").get();
+      final snap = await dbRef("students").get();
       List temp = [];
       if (snap.exists) {
         (snap.value as Map).forEach((k, v) {
@@ -2374,7 +3350,7 @@ class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
 
   Future decideReceipt(String deviceId, String decision) async {
     try {
-      await FirebaseDatabase.instance.ref("students/$deviceId").update({"status": decision});
+      await dbRef("students/$deviceId").update({"status": decision});
       fetchReceipts();
     } catch (e) {}
   }
@@ -2438,7 +3414,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
 
   Future fetchLeaderboard() async {
     try {
-      final snap = await FirebaseDatabase.instance.ref("leaderboard").get();
+      final snap = await dbRef("leaderboard").get();
       List temp = [];
       if (snap.exists) {
         (snap.value as Map).forEach((k, v) {
@@ -2484,6 +3460,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   }
 }
 
+// ============================================================================
+// 📝 QUIZ SCREEN (WITH BOOKMARKS + ANALYTICS + LIVE FIREBASE QUESTIONS)
+// ============================================================================
 class QuizScreen extends StatefulWidget {
   final String examType;
   final String year;
@@ -2508,7 +3487,7 @@ class _QuizScreenState extends State<QuizScreen> {
   @override
   void initState() {
     super.initState();
-    loadLocalQuestions();
+    loadQuestions();
   }
 
   @override
@@ -2529,21 +3508,37 @@ class _QuizScreenState extends State<QuizScreen> {
     });
   }
 
-  Future loadLocalQuestions() async {
+  Future loadQuestions() async {
     try {
-      final jsonString = await rootBundle.loadString('assets/questions.json');
-      final parsed = jsonDecode(jsonString);
+      String targetType = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? 'model_exams' : widget.examType;
+      String targetYear = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? '2018' : widget.year;
+      List rawList = [];
+
+      // 1. Local assets/questions.json
+      try {
+        final jsonString = await rootBundle.loadString('assets/questions.json');
+        final parsed = jsonDecode(jsonString);
+        if (parsed is Map && parsed[targetType] != null && parsed[targetType][targetYear] != null) {
+          var yearData = parsed[targetType][targetYear];
+          if (yearData[widget.subject] != null) rawList.addAll(List.from(yearData[widget.subject]));
+          else if (widget.subject == "Maths" && yearData["Mathematics"] != null) rawList.addAll(List.from(yearData["Mathematics"]));
+          else if (widget.subject == "Mathematics" && yearData["Maths"] != null) rawList.addAll(List.from(yearData["Maths"]));
+        }
+      } catch (_) {}
+
+      // 2. Merge Live Questions uploaded from Admin Dashboard
+      try {
+        String liveSub = widget.subject == "Maths" ? "Mathematics" : widget.subject;
+        final snap = await dbRef("live_questions/$targetType/$targetYear/$liveSub").get().timeout(const Duration(seconds: 3));
+        if (snap.exists && snap.value is Map) {
+          (snap.value as Map).forEach((k, v) {
+            if (v is Map) rawList.add(Map.from(v));
+          });
+        }
+      } catch (_) {}
+
       if (mounted) {
         setState(() {
-          String targetType = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? 'model_exams' : widget.examType;
-          String targetYear = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? '2018' : widget.year;
-          List rawList = [];
-          if (parsed is Map && parsed[targetType] != null && parsed[targetType][targetYear] != null) {
-            var yearData = parsed[targetType][targetYear];
-            if (yearData[widget.subject] != null) rawList = List.from(yearData[widget.subject]);
-            else if (widget.subject == "Maths" && yearData["Mathematics"] != null) rawList = List.from(yearData["Mathematics"]);
-            else if (widget.subject == "Mathematics" && yearData["Maths"] != null) rawList = List.from(yearData["Maths"]);
-          }
           questions = rawList.where((q) => q != null && q is Map && q['question'] != null).toList();
           if (widget.examType == 'trainer' || widget.examType == 'quizzes') questions.shuffle();
           userAnswers = List.filled(questions.length, null);
@@ -2556,6 +3551,40 @@ class _QuizScreenState extends State<QuizScreen> {
         hasError = true;
         isLoading = false;
       });
+    }
+  }
+
+  Future _bookmarkCurrentQuestion() async {
+    if (questions.isEmpty) return;
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String raw = prefs.getString('bookmarked_questions') ?? '[]';
+    List saved = [];
+    try {
+      saved = jsonDecode(raw);
+    } catch (_) {}
+
+    var currentQ = questions[currentQuestionIndex];
+    String qText = (currentQ['question'] ?? '').toString();
+    bool exists = saved.any((item) => (item['question'] ?? '').toString() == qText);
+
+    if (!exists) {
+      saved.add({
+        "subject": widget.subject,
+        "question": qText,
+        "options": parseOptions(currentQ),
+        "correct_option_id": currentQ['correct_option_id'] ?? 0,
+        "explanation": currentQ['explanation'] ?? 'ማብራሪያ የለውም።',
+      });
+      await prefs.setString('bookmarked_questions', jsonEncode(saved));
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(exists ? "⭐ ይህ ጥያቄ ቀድሞውኑ ተቀምጧል!" : "⭐ ጥያቄው Saved Questions ውስጥ ተቀምጧል!"),
+          backgroundColor: Colors.amber.shade700,
+        ),
+      );
     }
   }
 
@@ -2578,10 +3607,25 @@ class _QuizScreenState extends State<QuizScreen> {
         selectedOptionIndex = null;
       } else {
         _timer?.cancel();
+        _saveAnalytics();
         _submitScoreToLeaderboard();
         showCompletionDialog(isTimeUp: false);
       }
     });
+  }
+
+  Future _saveAnalytics() async {
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      String raw = prefs.getString('subject_analytics') ?? '{}';
+      Map stats = jsonDecode(raw);
+      String sub = widget.subject == "Maths" ? "Mathematics" : widget.subject;
+      Map prev = (stats[sub] is Map) ? Map.from(stats[sub]) : {"correct": 0, "total": 0};
+      prev["correct"] = (prev["correct"] ?? 0) + score;
+      prev["total"] = (prev["total"] ?? 0) + questions.length;
+      stats[sub] = prev;
+      await prefs.setString('subject_analytics', jsonEncode(stats));
+    } catch (_) {}
   }
 
   Future _submitScoreToLeaderboard() async {
@@ -2591,7 +3635,7 @@ class _QuizScreenState extends State<QuizScreen> {
       String deviceId = prefs.getString('device_id') ?? '';
       String name = prefs.getString('local_name') ?? 'Unknown';
       String recordId = "${deviceId}_${widget.subject}_${widget.year}";
-      await FirebaseDatabase.instance.ref("leaderboard/$recordId").set({"name": name, "score": score, "subject": widget.subject, "method": widget.examType.replaceAll('_', ' ').toUpperCase() + " (${widget.year})"});
+      await dbRef("leaderboard/$recordId").set({"name": name, "score": score, "subject": widget.subject, "method": widget.examType.replaceAll('_', ' ').toUpperCase() + " (${widget.year})"});
     } catch (e) {}
   }
 
@@ -2656,7 +3700,13 @@ class _QuizScreenState extends State<QuizScreen> {
     String timeStr = '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.subject, style: const TextStyle(fontSize: 16)), actions: [Center(child: Padding(padding: const EdgeInsets.only(right: 16), child: Text("⏱ $timeStr", style: const TextStyle(fontSize: 16, color: Colors.amberAccent))))]),
+      appBar: AppBar(
+        title: Text(widget.subject, style: const TextStyle(fontSize: 16)),
+        actions: [
+          IconButton(icon: const Icon(Icons.star_border_rounded, color: Colors.amber), tooltip: "Bookmark Question", onPressed: _bookmarkCurrentQuestion),
+          Center(child: Padding(padding: const EdgeInsets.only(right: 14), child: Text("⏱ $timeStr", style: const TextStyle(fontSize: 15, color: Colors.amberAccent)))),
+        ],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -2757,7 +3807,7 @@ class YearSelectionScreen extends StatelessWidget {
   const YearSelectionScreen({Key? key, required this.examType, required this.title}) : super(key: key);
   @override
   Widget build(BuildContext context) {
-    List<String> years = examType == 'model_exams' ? ['2017', '2018'] : ['2015', '2016', '2017', '2018'];
+    List<String> years = examType == 'model_exams' ? ['2017', '2018', '2019'] : ['2015', '2016', '2017', '2018', '2019'];
     return Scaffold(
       appBar: AppBar(title: Text(title)),
       body: GridView.builder(
