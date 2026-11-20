@@ -53,26 +53,54 @@ jobs:
           cp pubspec.yaml app_build/pubspec.yaml
           cp main.dart app_build/lib/main.dart
           cp remedial-release-key.jks app_build/android/app/remedial-release-key.jks
+          if [ -f "google-services.json" ]; then
+            cp google-services.json app_build/android/app/google-services.json
+          fi
           mkdir -p app_build/assets
           cp assets/questions.json app_build/assets/questions.json || cp questions.json app_build/assets/questions.json || true
           cp assets/logo.png app_build/assets/logo.png || cp logo.png app_build/assets/logo.png || true
 
-      - name: Configure App Name, Permissions & Permanent Release Signing
+      - name: Configure Android Manifest, FCM, Desugaring, FLAG_SECURE & Signing
         run: |
           python3 -c '
           import os
 
+          has_google_services = os.path.exists("app_build/android/app/google-services.json")
+
+          # 1. AndroidManifest.xml permissions & app name
           manifest_path = "app_build/android/app/src/main/AndroidManifest.xml"
           with open(manifest_path, "r") as f:
               m = f.read()
           m = m.replace("android:label=\"remedial_matrix\"", "android:label=\"Remedial Matrix\"")
           m = m.replace("android:label=\"app_build\"", "android:label=\"Remedial Matrix\"")
           if "REQUEST_INSTALL_PACKAGES" not in m:
-              perms = "<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <uses-permission android:name=\"android.permission.REQUEST_INSTALL_PACKAGES\"/>\n    <application"
+              perms = (
+                  "<uses-permission android:name=\"android.permission.INTERNET\"/>\n"
+                  "    <uses-permission android:name=\"android.permission.REQUEST_INSTALL_PACKAGES\"/>\n"
+                  "    <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\"/>\n"
+                  "    <uses-permission android:name=\"android.permission.RECEIVE_BOOT_COMPLETED\"/>\n"
+                  "    <uses-permission android:name=\"android.permission.VIBRATE\"/>\n"
+                  "    <application"
+              )
               m = m.replace("<application", perms, 1)
           with open(manifest_path, "w") as f:
               f.write(m)
 
+          # 2. settings.gradle for Google Services plugin (FCM)
+          settings_path = "app_build/android/settings.gradle"
+          if has_google_services and os.path.exists(settings_path):
+              with open(settings_path, "r") as f:
+                  s = f.read()
+              if "com.google.gms.google-services" not in s:
+                  s = s.replace(
+                      "id \"org.jetbrains.kotlin.android\"",
+                      "id \"com.google.gms.google-services\" version \"4.4.2\" apply false\n    id \"org.jetbrains.kotlin.android\"",
+                      1
+                  )
+                  with open(settings_path, "w") as f:
+                      f.write(s)
+
+          # 3. app/build.gradle (SDK 35, Desugaring, Google Services, Signing)
           gradle_path = "app_build/android/app/build.gradle"
           if os.path.exists(gradle_path):
               with open(gradle_path, "r") as f:
@@ -80,8 +108,17 @@ jobs:
               g = g.replace("flutter.compileSdkVersion", "35")
               g = g.replace("flutter.targetSdkVersion", "34")
               g = g.replace("flutter.minSdkVersion", "21")
-              signing_block = """
+              if has_google_services and "com.google.gms.google-services" not in g:
+                  g = g.replace(
+                      "id \"dev.flutter.flutter-gradle-plugin\"",
+                      "id \"dev.flutter.flutter-gradle-plugin\"\n    id \"com.google.gms.google-services\"",
+                      1
+                  )
+              extra_block = """
           android {
+              compileOptions {
+                  coreLibraryDesugaringEnabled true
+              }
               signingConfigs {
                   release {
                       storeFile file("remedial-release-key.jks")
@@ -102,20 +139,50 @@ jobs:
                   }
               }
           }
+          dependencies {
+              coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.4"
+          }
           """
               with open(gradle_path, "w") as f:
-                  f.write(g + "\n" + signing_block)
+                  f.write(g + "\n" + extra_block)
 
-          kts_path = "app_build/android/app/build.gradle.kts"
-          if os.path.exists(kts_path):
-              with open(kts_path, "r") as f:
-                  k = f.read()
-              k = k.replace("flutter.compileSdkVersion", "35")
-              k = k.replace("flutter.targetSdkVersion", "34")
-              k = k.replace("flutter.minSdkVersion", "21")
-              k += "\nandroid { lint { checkReleaseBuilds = false; abortOnError = false } }\n"
-              with open(kts_path, "w") as f:
-                  f.write(k)
+          # 4. MainActivity.kt (Screenshot control channel: blocks students, allows Owner/Admin)
+          for root, dirs, files in os.walk("app_build/android/app/src/main/kotlin"):
+              for fn in files:
+                  if fn == "MainActivity.kt":
+                      ma_path = os.path.join(root, fn)
+                      with open(ma_path, "r") as f:
+                          first_line = f.readline().strip()
+                      kotlin_code = first_line + """
+
+          import android.view.WindowManager
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity: FlutterActivity() {
+              private val CHANNEL = "com.remedial.matrix/security"
+
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+                      if (call.method == "setSecure") {
+                          val secure = call.argument<Boolean>("secure") ?: true
+                          if (secure) {
+                              window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                          } else {
+                              window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                          }
+                          result.success(true)
+                      } else {
+                          result.notImplemented()
+                      }
+                  }
+              }
+          }
+          """
+                      with open(ma_path, "w") as f:
+                          f.write(kotlin_code)
           '
 
       - name: Install Dependencies & Generate Icon
@@ -136,9 +203,9 @@ jobs:
           name: Remedial-Matrix-Universal-APK
           path: Remedial_Matrix_Universal.apk
 
-      - name: Publish Direct Download Link to GitHub Releases
+      - name: Publish to Private Releases Backup
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Remedial Matrix Latest Release
+          tag_name: v1.2.0
+          name: Remedial Matrix v1.2.0
           files: Remedial_Matrix_Universal.apk
