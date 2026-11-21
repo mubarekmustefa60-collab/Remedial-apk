@@ -63,9 +63,28 @@ jobs:
       - name: Configure Android Manifest, FCM, Desugaring, FLAG_SECURE & Signing
         run: |
           python3 -c '
-          import os
+          import os, json
 
-          has_google_services = os.path.exists("app_build/android/app/google-services.json")
+          gs_path = "app_build/android/app/google-services.json"
+          has_google_services = os.path.exists(gs_path)
+          target_pkg = "com.remedial.matrix"
+
+          if has_google_services:
+              try:
+                  with open(gs_path, "r") as f:
+                      gs = json.load(f)
+                  pkgs = [
+                      c.get("client_info", {}).get("android_client_info", {}).get("package_name", "")
+                      for c in gs.get("client", [])
+                  ]
+                  pkgs = [p for p in pkgs if p]
+                  if "com.remedial.matrix" in pkgs:
+                      target_pkg = "com.remedial.matrix"
+                  elif pkgs:
+                      target_pkg = pkgs[0]
+                  print("Using matched Firebase applicationId:", target_pkg)
+              except Exception as e:
+                  print("Warning reading google-services.json:", e)
 
           manifest_path = "app_build/android/app/src/main/AndroidManifest.xml"
           with open(manifest_path, "r") as f:
@@ -105,6 +124,14 @@ jobs:
               g = g.replace("flutter.compileSdkVersion", "35")
               g = g.replace("flutter.targetSdkVersion", "34")
               g = g.replace("flutter.minSdkVersion", "21")
+
+              new_lines = []
+              for line in g.splitlines():
+                  if "applicationId" in line and "com.remedial.matrix" in line:
+                      line = "        applicationId = \"" + target_pkg + "\""
+                  new_lines.append(line)
+              g = "\n".join(new_lines)
+
               if has_google_services and "com.google.gms.google-services" not in g:
                   g = g.replace(
                       "id \"dev.flutter.flutter-gradle-plugin\"",
