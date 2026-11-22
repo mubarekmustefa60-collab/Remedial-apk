@@ -58,6 +58,7 @@ jobs:
           fi
           mkdir -p app_build/assets
           cp assets/questions.json app_build/assets/questions.json || cp questions.json app_build/assets/questions.json || true
+          cp assets/remedial_2019_model_exams.json app_build/assets/remedial_2019_model_exams.json || cp remedial_2019_model_exams.json app_build/assets/remedial_2019_model_exams.json || true
           cp assets/logo.png app_build/assets/logo.png || cp logo.png app_build/assets/logo.png || true
 
       - name: Configure Android Manifest, FCM, Desugaring, FLAG_SECURE & Signing
@@ -241,6 +242,7 @@ jobs:
       - name: Publish to Private Releases Backup
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0
-          name: Remedial Matrix v1.2.0
+          tag_name: v1.3.0
+          name: Remedial Matrix v1.3.0
           files: Remedial_Matrix_Universal.apk
+
