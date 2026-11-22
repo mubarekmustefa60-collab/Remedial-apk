@@ -10,13 +10,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
-const String APP_VERSION = "1.2.0";
+const String APP_VERSION = "1.3.0";
 const int OWNER_ADMIN_ID = 5053;
 
 // የ Public ሪፖዚቶሪ (Remedial-Updates) ቋሚ ሊንኮች
@@ -27,7 +28,24 @@ const String TELEGRAM_CHANNEL_URL = "https://t.me/REMEDIAL_MATRIX";
 const MethodChannel _securityChannel = MethodChannel("com.remedial.matrix/security");
 final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
 
-// Dynamic Firebase Database Reference (ወደፊት Firebase account ቢቀየር አፑ ሳይረበሽ የሚቀጥልበት)
+// 🌗 Global Dark / Light Mode Notifier
+final ValueNotifier<ThemeMode> appThemeMode = ValueNotifier<ThemeMode>(ThemeMode.light);
+
+bool isDarkMode(BuildContext context) => Theme.of(context).brightness == Brightness.dark;
+Color cardBg(BuildContext context) => isDarkMode(context) ? const Color(0xFF181B28) : Colors.white;
+Color surfaceBg(BuildContext context) => isDarkMode(context) ? const Color(0xFF1E2235) : const Color(0xFFF1F3FA);
+Color textPrimary(BuildContext context) => isDarkMode(context) ? Colors.white : const Color(0xFF1A1D2E);
+Color textSecondary(BuildContext context) => isDarkMode(context) ? Colors.white70 : const Color(0xFF5A607F);
+Color borderCol(BuildContext context) => isDarkMode(context) ? Colors.white12 : const Color(0xFFE3E7F4);
+
+Future<void> toggleAppTheme() async {
+  SharedPreferences prefs = await SharedPreferences.getInstance();
+  bool nowDark = appThemeMode.value != ThemeMode.dark;
+  appThemeMode.value = nowDark ? ThemeMode.dark : ThemeMode.light;
+  await prefs.setBool('is_dark_mode', nowDark);
+}
+
+// Dynamic Firebase Database Reference
 FirebaseDatabase? _activeDatabase;
 
 DatabaseReference dbRef(String path) {
@@ -115,7 +133,6 @@ Future<void> _initFirebaseWithDynamicSwitcher() async {
     } catch (_) {}
   }
 
-  // ከ Remedial-Updates/firebase_config.json ላይ የFirebase መረጃ ፈትሾ ከተቀየረ ወደ አዲሱ ያዞረዋል
   try {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String? configJson = prefs.getString('cached_fb_config');
@@ -126,7 +143,7 @@ Future<void> _initFirebaseWithDynamicSwitcher() async {
       );
       if (resp.statusCode == 200 && resp.data != null) {
         String raw = resp.data is String ? resp.data : jsonEncode(resp.data);
-        jsonDecode(raw); // validate JSON
+        jsonDecode(raw);
         configJson = raw;
         await prefs.setString('cached_fb_config', raw);
       }
@@ -166,6 +183,10 @@ Future<void> _initFirebaseWithDynamicSwitcher() async {
   try {
     (_activeDatabase ?? FirebaseDatabase.instance).setPersistenceEnabled(true);
   } catch (_) {}
+
+  try {
+    await FirebaseAnalytics.instance.logAppOpen();
+  } catch (_) {}
 }
 
 Future<void> _setupPushNotifications(bool isVip) async {
@@ -191,8 +212,103 @@ Future<void> _setupPushNotifications(bool isVip) async {
   } catch (_) {}
 }
 
+// ============================================================================
+// 🎮 GAMIFICATION & STUDY PROGRESS TRACKER (STREAK, POINTS, DAILY GOAL, BADGES)
+// ============================================================================
+class StudyProgress {
+  static String _todayKey() {
+    final now = DateTime.now();
+    return "${now.year}-${now.month}-${now.day}";
+  }
+
+  static Future<void> recordAppOpenStreak() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String today = _todayKey();
+    String lastDate = prefs.getString('streak_last_date') ?? '';
+    int streak = prefs.getInt('study_streak') ?? 0;
+
+    if (lastDate != today) {
+      if (lastDate.isNotEmpty) {
+        final parts = lastDate.split('-');
+        if (parts.length == 3) {
+          final lastDt = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+          final nowDt = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+          int diff = nowDt.difference(lastDt).inDays;
+          streak = (diff == 1) ? streak + 1 : 1;
+        } else {
+          streak = 1;
+        }
+      } else {
+        streak = 1;
+      }
+      await prefs.setInt('study_streak', streak);
+      await prefs.setString('streak_last_date', today);
+      int pts = prefs.getInt('user_points') ?? 0;
+      await prefs.setInt('user_points', pts + 10);
+    }
+  }
+
+  static Future<void> recordActivity({int topicsDelta = 0, int minutesDelta = 0, int pointsDelta = 0, bool highScore = false}) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String today = _todayKey();
+
+    if (topicsDelta > 0) {
+      int totalTopics = (prefs.getInt('total_topics') ?? 0) + topicsDelta;
+      int todayTopics = (prefs.getInt('today_topics_$today') ?? 0) + topicsDelta;
+      await prefs.setInt('total_topics', totalTopics);
+      await prefs.setInt('today_topics_$today', todayTopics);
+    }
+    if (minutesDelta > 0) {
+      int todayMins = (prefs.getInt('today_minutes_$today') ?? 0) + minutesDelta;
+      await prefs.setInt('today_minutes_$today', todayMins);
+    }
+    if (pointsDelta > 0) {
+      int pts = (prefs.getInt('user_points') ?? 0) + pointsDelta;
+      await prefs.setInt('user_points', pts);
+    }
+    if (highScore) {
+      await prefs.setBool('badge_quiz_pro', true);
+    }
+  }
+
+  static Future<Map<String, dynamic>> loadStats() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String today = _todayKey();
+    int streak = prefs.getInt('study_streak') ?? 1;
+    int totalTopics = prefs.getInt('total_topics') ?? 0;
+    int todayTopics = prefs.getInt('today_topics_$today') ?? 0;
+    int todayMinutes = prefs.getInt('today_minutes_$today') ?? 0;
+    int points = prefs.getInt('user_points') ?? 0;
+    bool quizPro = prefs.getBool('badge_quiz_pro') ?? (points >= 150);
+
+    bool bFirstStep = totalTopics >= 1 || points >= 20;
+    bool bSevenDays = streak >= 7;
+    bool bQuizPro = quizPro;
+    bool bMaster = points >= 500;
+    int unlocked = (bFirstStep ? 1 : 0) + (bSevenDays ? 1 : 0) + (bQuizPro ? 1 : 0) + (bMaster ? 1 : 0);
+
+    return {
+      'streak': streak,
+      'totalTopics': totalTopics,
+      'todayTopics': todayTopics,
+      'todayMinutes': todayMinutes,
+      'points': points,
+      'bFirstStep': bFirstStep,
+      'bSevenDays': bSevenDays,
+      'bQuizPro': bQuizPro,
+      'bMaster': bMaster,
+      'unlockedBadges': unlocked,
+    };
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    bool savedDark = prefs.getBool('is_dark_mode') ?? false;
+    appThemeMode.value = savedDark ? ThemeMode.dark : ThemeMode.light;
+  } catch (_) {}
   await _initLocalNotifications();
   await _initFirebaseWithDynamicSwitcher();
   try {
@@ -205,38 +321,64 @@ class RemedialApp extends StatelessWidget {
   const RemedialApp({Key? key}) : super(key: key);
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Remedial Matrix',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0F111A),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF181B28),
-          elevation: 0,
-          centerTitle: false,
-        ),
-        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-          backgroundColor: Color(0xFF181B28),
-          selectedItemColor: Colors.amber,
-          unselectedItemColor: Colors.white54,
-        ),
-      ),
-      home: const AuthCheckScreen(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: appThemeMode,
+      builder: (context, mode, _) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Remedial Matrix',
+          themeMode: mode,
+          theme: ThemeData(
+            brightness: Brightness.light,
+            primaryColor: const Color(0xFF5B4FE9),
+            scaffoldBackgroundColor: const Color(0xFFF5F6FA),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Colors.white,
+              foregroundColor: Color(0xFF1A1D2E),
+              elevation: 0.6,
+              centerTitle: false,
+              iconTheme: IconThemeData(color: Color(0xFF1A1D2E)),
+            ),
+            bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+              backgroundColor: Colors.white,
+              selectedItemColor: Color(0xFF5B4FE9),
+              unselectedItemColor: Color(0xFF8A90A6),
+              elevation: 8,
+            ),
+          ),
+          darkTheme: ThemeData(
+            brightness: Brightness.dark,
+            primaryColor: Colors.amber,
+            scaffoldBackgroundColor: const Color(0xFF0F111A),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Color(0xFF181B28),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              centerTitle: false,
+            ),
+            bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+              backgroundColor: Color(0xFF181B28),
+              selectedItemColor: Colors.amber,
+              unselectedItemColor: Colors.white54,
+            ),
+          ),
+          home: const AuthCheckScreen(),
+        );
+      },
     );
   }
 }
 
 // ============================================================================
-// 📤 SHARE APP HELPER (ለጓደኞች በቀላሉ አፑን ማጋሪያ)
+// 📤 SHARE APP HELPER
 // ============================================================================
 void shareRemedialMatrixApp(BuildContext context) {
   const String shareText =
-      "🎓 Remedial Matrix (2019 Special App)!\n\n"
+      "🎓 Remedial Matrix (V1.3.0 - 2019 Special App)!\n\n"
       "✅ የ2019 ሙሉ የትምህርት ሚኒስቴር Course Outline\n"
-      "✅ ሳምንታዊ የጥናት ፕሮግራም እና ማሳሰቢያ\n"
-      "✅ የ2015-2018 የሪሚዲያል እና የሞዴል ፈተናዎች ከነማብራሪያቸው\n"
-      "✅ ስማርት Exam Trainer & Pomodoro Timer\n\n"
+      "✅ አዲሱ የ2019 Model Exam (7 ትምህርቶች - 427 ጥያቄዎች ከነማብራሪያቸው)\n"
+      "✅ የ2015-2018 የሪሚዲያል እና የሞዴል ፈተናዎች\n"
+      "✅ Dark & Light Mode + ዕለታዊ Streak እና Achievements\n\n"
       "📥 አፑን በቀጥታ ለማውረድ (Direct Download)፦\n$DEFAULT_DIRECT_APK_URL\n\n"
       "📢 የቴሌግራም ቻናላችን፦ $TELEGRAM_CHANNEL_URL";
   Share.share(shareText, subject: 'Remedial Matrix App');
@@ -332,7 +474,7 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
         content: Text(
           widget.whatsNew.isNotEmpty
               ? widget.whatsNew
-              : "• የውጭ Notification እና የዕለቱ የጥናት ማሳሰቢያ\n• የጥያቄ Bookmark እና Pomodoro Timer\n• የ2019 ሙሉ Course Outline እና የውጤት ትንታኔ",
+              : "• አዲስ ውብ Dark & Light Mode ገጽታ\n• የ2019 ሙሉ Model Exam (427 ጥያቄዎች)\n• Daily Streak፣ Today's Challenge እና Achievements",
           style: const TextStyle(color: Colors.white, fontSize: 14.5, height: 1.5),
         ),
         actions: [
@@ -584,6 +726,13 @@ String getAmharicDay(String englishDay) {
   return map[englishDay] ?? englishDay;
 }
 
+String getGreetingText() {
+  int h = DateTime.now().hour;
+  if (h < 12) return "Good Morning! ☀️";
+  if (h < 17) return "Good Afternoon! 🌤️";
+  return "Good Evening! 🌇";
+}
+
 bool isOwnerUser(int shortId, String name) {
   return (shortId == OWNER_ADMIN_ID) || (name.toLowerCase().trim() == "mubarek mustefa");
 }
@@ -613,6 +762,14 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
       String deviceId = prefs.getString('device_id') ?? '';
 
       if (localRegistered && deviceId.isNotEmpty) {
+        // 📊 Tag current app version to Firebase for live Version Tracking
+        try {
+          dbRef("students/$deviceId").update({
+            "app_version": APP_VERSION,
+            "last_seen": DateTime.now().toIso8601String(),
+          });
+        } catch (_) {}
+
         try {
           final snapshot = await dbRef("students/$deviceId/status").get().timeout(const Duration(seconds: 5));
           if (snapshot.exists) {
@@ -655,12 +812,12 @@ class BlockedScreen extends StatelessWidget {
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.block, color: Colors.red, size: 80),
-            SizedBox(height: 20),
-            Text("አካውንትዎ ታግዷል!", style: TextStyle(fontSize: 24, color: Colors.white, fontWeight: FontWeight.bold)),
-            SizedBox(height: 10),
-            Text("እባክዎ አድሚንን ያነጋግሩ።", style: TextStyle(color: Colors.white70)),
+          children: [
+            const Icon(Icons.block, color: Colors.red, size: 80),
+            const SizedBox(height: 20),
+            Text("አካውንትዎ ታግዷል!", style: TextStyle(fontSize: 24, color: textPrimary(context), fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Text("እባክዎ አድሚንን ያነጋግሩ።", style: TextStyle(color: textSecondary(context))),
           ],
         ),
       ),
@@ -743,8 +900,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
             "stream": selectedStream,
             "status": finalStatus,
             "short_id": shortId,
+            "app_version": APP_VERSION,
             "registered_at": DateTime.now().toIso8601String(),
+            "last_seen": DateTime.now().toIso8601String(),
           }).timeout(const Duration(seconds: 6));
+        } catch (_) {}
+      } else {
+        try {
+          await dbRef("students/$deviceId").update({
+            "app_version": APP_VERSION,
+            "last_seen": DateTime.now().toIso8601String(),
+          }).timeout(const Duration(seconds: 4));
         } catch (_) {}
       }
 
@@ -770,57 +936,57 @@ class _RegisterScreenState extends State<RegisterScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: 15),
-            const CircleAvatar(radius: 42, backgroundColor: Colors.amber, child: Icon(Icons.school, size: 46, color: Colors.black)),
+            const CircleAvatar(radius: 42, backgroundColor: Color(0xFF5B4FE9), child: Icon(Icons.school, size: 46, color: Colors.white)),
             const SizedBox(height: 16),
-            const Text("እንኳን ወደ Remedial Matrix በሰላም መጡ! 🌟\nለመጀመር መረጃዎትን ይሙሉ", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+            Text("እንኳን ወደ Remedial Matrix በሰላም መጡ! 🌟\nለመጀመር መረጃዎትን ይሙሉ", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textPrimary(context)), textAlign: TextAlign.center),
             const SizedBox(height: 24),
             TextField(
               controller: nameCtrl,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: textPrimary(context)),
               decoration: InputDecoration(
                 labelText: "ሙሉ ስም (Full Name)",
                 hintText: "ከዚህ በፊት የተመዘገቡበትን ስም ያስገቡ",
                 filled: true,
-                fillColor: const Color(0xFF1A1E2E),
+                fillColor: cardBg(context),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                prefixIcon: const Icon(Icons.person, color: Colors.amber),
+                prefixIcon: const Icon(Icons.person, color: Color(0xFF5B4FE9)),
               ),
             ),
             const SizedBox(height: 14),
             TextField(
               controller: oldIdCtrl,
               keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: textPrimary(context)),
               decoration: InputDecoration(
                 labelText: "የድሮ መለያ ቁጥር / Old ID (ካለዎት ብቻ)",
                 hintText: "አዲስ ተማሪ ከሆኑ ይህንን ባዶ ይተዉት",
                 filled: true,
-                fillColor: const Color(0xFF1A1E2E),
+                fillColor: cardBg(context),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                prefixIcon: const Icon(Icons.badge_outlined, color: Colors.cyanAccent),
+                prefixIcon: const Icon(Icons.badge_outlined, color: Colors.teal),
               ),
             ),
             const SizedBox(height: 18),
-            const Text("የጥናት መስመር (Stream):", style: TextStyle(fontSize: 15, color: Colors.white70, fontWeight: FontWeight.bold)),
+            Text("የጥናት መስመር (Stream):", style: TextStyle(fontSize: 15, color: textSecondary(context), fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Container(
-              decoration: BoxDecoration(color: const Color(0xFF1A1E2E), borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(color: cardBg(context), borderRadius: BorderRadius.circular(12), border: Border.all(color: borderCol(context))),
               child: Row(
                 children: [
-                  Expanded(child: RadioListTile(activeColor: Colors.amber, title: const Text("Natural"), value: "Natural", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
-                  Expanded(child: RadioListTile(activeColor: Colors.amber, title: const Text("Social"), value: "Social", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
+                  Expanded(child: RadioListTile(activeColor: const Color(0xFF5B4FE9), title: const Text("Natural"), value: "Natural", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
+                  Expanded(child: RadioListTile(activeColor: const Color(0xFF5B4FE9), title: const Text("Social"), value: "Social", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
                 ],
               ),
             ),
             const SizedBox(height: 24),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.amber.shade700,
+                backgroundColor: const Color(0xFF5B4FE9),
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: isSaving ? null : registerUser,
-              child: isSaving ? const CircularProgressIndicator(color: Colors.black) : const Text("Get Started / Restore Account 🚀", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.black)),
+              child: isSaving ? const CircularProgressIndicator(color: Colors.white) : const Text("Get Started / Restore Account 🚀", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
             )
           ],
         ),
@@ -847,16 +1013,47 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   String examLabel = "2019 National Remedial Exam";
   int _currentIndex = 0;
 
+  Map<String, dynamic> progressStats = {
+    'streak': 1,
+    'totalTopics': 0,
+    'todayTopics': 0,
+    'todayMinutes': 0,
+    'points': 0,
+    'bFirstStep': false,
+    'bSevenDays': false,
+    'bQuizPro': false,
+    'bMaster': false,
+    'unlockedBadges': 0,
+  };
+
+  Timer? _minuteTicker;
+
   @override
   void initState() {
     super.initState();
     appStatus = widget.initialStatus;
     _initSequence();
+    _minuteTicker = Timer.periodic(const Duration(minutes: 1), (_) async {
+      await StudyProgress.recordActivity(minutesDelta: 1);
+      _refreshProgressStats();
+    });
+  }
+
+  @override
+  void dispose() {
+    _minuteTicker?.cancel();
+    super.dispose();
+  }
+
+  Future _refreshProgressStats() async {
+    final stats = await StudyProgress.loadStats();
+    if (mounted) setState(() => progressStats = stats);
   }
 
   Future _initSequence() async {
+    await StudyProgress.recordAppOpenStreak();
+    await _refreshProgressStats();
     await _loadUserData();
-    // ለተማሪዎች Screenshot ይቆልፋል፤ ለባለቤቱ (5053) ግን ክፍት ያደርገዋል
     await setScreenshotProtection(!isOwnerUser(userShortId, userName));
     await _setupPushNotifications(appStatus == 'vip');
     await _scheduleOfflineDailyStudyReminder(userStream);
@@ -954,25 +1151,25 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
             await showDialog(
               context: context,
               builder: (context) => AlertDialog(
-                backgroundColor: const Color(0xFF1E2235),
+                backgroundColor: cardBg(context),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 title: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(badge, style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 6),
-                    Text(data['title'] ?? "ማስታወቂያ", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+                    Text(data['title'] ?? "ማስታወቂያ", style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 18)),
                   ],
                 ),
-                content: Text(data['message'] ?? "", style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.5)),
+                content: Text(data['message'] ?? "", style: TextStyle(color: textSecondary(context), fontSize: 15, height: 1.5)),
                 actions: [
                   ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.amber),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9)),
                     onPressed: () async {
                       await prefs.setInt('last_broadcast_$target', newTime);
                       if (context.mounted) Navigator.pop(context);
                     },
-                    child: const Text("አንብቤያለሁ (Close)", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                    child: const Text("አንብቤያለሁ (Close)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   )
                 ],
               ),
@@ -999,29 +1196,29 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF1E2235),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.cyanAccent, width: 1.2)),
+            backgroundColor: cardBg(context),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Color(0xFF5B4FE9), width: 1.2)),
             title: Row(
-              children: const [
-                Icon(Icons.notifications_active, color: Colors.cyanAccent, size: 28),
-                SizedBox(width: 10),
-                Expanded(child: Text("📅 የዛሬው የጥናት ፕሮግራም (2019 Syllabus)", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))),
+              children: [
+                const Icon(Icons.notifications_active, color: Color(0xFF5B4FE9), size: 26),
+                const SizedBox(width: 10),
+                Expanded(child: Text("📅 የዛሬው የጥናት ፕሮግራም (2019 Syllabus)", style: TextStyle(color: textPrimary(context), fontSize: 15.5, fontWeight: FontWeight.bold))),
               ],
             ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("ዕለት፦ ${getAmharicDay(dayName)}", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 12),
+                Text("ዕለት፦ ${getAmharicDay(dayName)}", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 10),
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(10)),
-                  child: Text(todayCourse, style: const TextStyle(color: Colors.greenAccent, fontSize: 14.5, fontWeight: FontWeight.bold, height: 1.4)),
+                  decoration: BoxDecoration(color: surfaceBg(context), borderRadius: BorderRadius.circular(10)),
+                  child: Text(todayCourse, style: TextStyle(color: textPrimary(context), fontSize: 14, fontWeight: FontWeight.w600, height: 1.4)),
                 ),
-                const SizedBox(height: 14),
-                const Text("ዛሬ ይህንን የ2019 ሪሚዲያል ኮርስ ርዕስ አንብበዋል? ካላነበቡ አሁኑኑ ጥናትዎን ይጀምሩ!", style: TextStyle(color: Colors.white70, fontSize: 13.5)),
+                const SizedBox(height: 12),
+                Text("ዛሬ ይህንን የ2019 ሪሚዲያል ኮርስ ርዕስ አንብበዋል? ካላነበቡ አሁኑኑ ጥናትዎን ይጀምሩ!", style: TextStyle(color: textSecondary(context), fontSize: 13)),
               ],
             ),
             actions: [
@@ -1030,20 +1227,22 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                   await prefs.setString('last_study_prompt_day', todayKey);
                   if (context.mounted) Navigator.pop(context);
                 },
-                child: const Text("በኋላ አነባለሁ", style: TextStyle(color: Colors.white60)),
+                child: Text("በኋላ አነባለሁ", style: TextStyle(color: textSecondary(context))),
               ),
               ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.cyanAccent.shade700),
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9)),
                 onPressed: () async {
                   await prefs.setString('last_study_prompt_day', todayKey);
                   await prefs.setBool('study_done_${userStream}_$dayName', true);
+                  await StudyProgress.recordActivity(topicsDelta: 1, pointsDelta: 15);
+                  _refreshProgressStats();
                   if (context.mounted) {
                     Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("👏 በጣም ጎበዝ! የዛሬው የጥናት ፕሮግራም ተመዝግቧል!"), backgroundColor: Colors.green));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("👏 በጣም ጎበዝ! +15 ነጥብ አግኝተዋል!"), backgroundColor: Colors.green));
                   }
                 },
-                icon: const Icon(Icons.check_circle, color: Colors.black, size: 18),
-                label: const Text("አዎ አንብቤያለሁ", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                icon: const Icon(Icons.check_circle, color: Colors.white, size: 18),
+                label: const Text("አዎ አንብቤያለሁ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
@@ -1071,6 +1270,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         }
       }
     } catch (e) {}
+    _refreshProgressStats();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("✅ ስቴተስ: ${appStatus.toUpperCase()}"), backgroundColor: Colors.green));
     }
@@ -1079,6 +1279,8 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   @override
   Widget build(BuildContext context) {
     bool isVIP = appStatus == 'vip';
+    bool dark = isDarkMode(context);
+
     final List<Widget> pages = [
       HomeContent(
         isVIP: isVIP,
@@ -1090,51 +1292,76 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         isAdminCached: isAdminCached,
         examDaysLeft: examDaysLeft,
         examLabel: examLabel,
+        progressStats: progressStats,
         refreshCallback: refreshStatus,
+        onProgressRefresh: _refreshProgressStats,
         onStatusChange: (s) {
           setState(() => appStatus = s);
           _setupPushNotifications(s == 'vip');
         },
         onAdminCached: () => setState(() => isAdminCached = true),
       ),
-      StudyScheduleScreen(userStream: userStream),
-      ProfileContent(userName: userName, userShortId: userShortId, appStatus: appStatus, userStream: userStream),
+      StudyScheduleScreen(userStream: userStream, onMarkedDone: _refreshProgressStats),
+      ProfileContent(
+        userName: userName,
+        userShortId: userShortId,
+        appStatus: appStatus,
+        userStream: userStream,
+        points: progressStats['points'] ?? 0,
+        streak: progressStats['streak'] ?? 1,
+      ),
     ];
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(2),
-              decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.amber, width: 1.5)),
-              child: const CircleAvatar(radius: 16, backgroundColor: Colors.white, child: Icon(Icons.school, color: Colors.indigo, size: 20)),
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF5B4FE9).withOpacity(0.14),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.school_rounded, color: Color(0xFF5B4FE9), size: 22),
             ),
             const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text('REMEDIAL MATRIX', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, letterSpacing: 0.8)),
-                Text('2019 MoE Curriculum Platform', style: TextStyle(fontSize: 11, color: Colors.amberAccent)),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Remedial Matrix', overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textPrimary(context))),
+                  Text('2019 MoE Curriculum • v$APP_VERSION', overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10.5, color: dark ? Colors.amberAccent : const Color(0xFF5B4FE9))),
+                ],
+              ),
             ),
           ],
         ),
         actions: [
           if (isAdminCached)
             IconButton(
-              icon: const Icon(Icons.admin_panel_settings, color: Colors.greenAccent, size: 26),
+              icon: const Icon(Icons.admin_panel_settings, color: Colors.green, size: 24),
               tooltip: "Direct Admin Panel",
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen())),
             ),
-          IconButton(icon: const Icon(Icons.share, color: Colors.cyanAccent), tooltip: "Share App", onPressed: () => shareRemedialMatrixApp(context)),
-          IconButton(icon: const Icon(Icons.refresh, color: Colors.amber), tooltip: "Refresh Status", onPressed: refreshStatus),
-          if (isVIP) const Padding(padding: EdgeInsets.only(right: 10.0), child: Center(child: Icon(Icons.verified, color: Colors.amber, size: 24)))
+          IconButton(
+            icon: Icon(dark ? Icons.light_mode_rounded : Icons.dark_mode_rounded, color: dark ? Colors.amber : const Color(0xFF5B4FE9)),
+            tooltip: dark ? "Light Mode" : "Dark Mode",
+            onPressed: toggleAppTheme,
+          ),
+          IconButton(
+            icon: Icon(Icons.refresh_rounded, color: textSecondary(context)),
+            tooltip: "Refresh Status",
+            onPressed: refreshStatus,
+          ),
         ],
       ),
       body: pages[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
+        onTap: (index) {
+          setState(() => _currentIndex = index);
+          _refreshProgressStats();
+        },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.dashboard_rounded), label: 'Home'),
           BottomNavigationBarItem(icon: Icon(Icons.calendar_month_rounded), label: 'Schedule & Outline'),
@@ -1145,7 +1372,10 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 }
 
-class HomeContent extends StatelessWidget {
+// ============================================================================
+// 🏠 MODERN GAMIFIED HOME SCREEN (DARK & LIGHT MODE)
+// ============================================================================
+class HomeContent extends StatefulWidget {
   final bool isVIP;
   final String appStatus;
   final int userShortId;
@@ -1155,7 +1385,9 @@ class HomeContent extends StatelessWidget {
   final bool isAdminCached;
   final int? examDaysLeft;
   final String examLabel;
+  final Map<String, dynamic> progressStats;
   final VoidCallback refreshCallback;
+  final VoidCallback onProgressRefresh;
   final Function(String) onStatusChange;
   final VoidCallback onAdminCached;
 
@@ -1170,38 +1402,73 @@ class HomeContent extends StatelessWidget {
     required this.isAdminCached,
     required this.examDaysLeft,
     required this.examLabel,
+    required this.progressStats,
     required this.refreshCallback,
+    required this.onProgressRefresh,
     required this.onStatusChange,
     required this.onAdminCached,
   }) : super(key: key);
+
+  @override
+  _HomeContentState createState() => _HomeContentState();
+}
+
+class _HomeContentState extends State<HomeContent> {
+  Timer? _clockTimer;
+  String _timeLeftToday = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _updateClock();
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) => _updateClock());
+  }
+
+  @override
+  void dispose() {
+    _clockTimer?.cancel();
+    super.dispose();
+  }
+
+  void _updateClock() {
+    final now = DateTime.now();
+    final midnight = DateTime(now.year, now.month, now.day + 1);
+    final diff = midnight.difference(now);
+    String h = diff.inHours.toString().padLeft(2, '0');
+    String m = (diff.inMinutes % 60).toString().padLeft(2, '0');
+    String s = (diff.inSeconds % 60).toString().padLeft(2, '0');
+    if (mounted) {
+      setState(() => _timeLeftToday = "$h:$m:$s");
+    }
+  }
 
   void _showRegistrationStepsGuide(BuildContext context) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1E2E),
+        backgroundColor: cardBg(context),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: Colors.amber, width: 1.5)),
         title: Row(
-          children: const [
-            Icon(Icons.stars_rounded, color: Colors.amber, size: 30),
-            SizedBox(width: 8),
-            Expanded(child: Text("VIP አባል የመሆኛ ቅደም ተከተል", style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold))),
+          children: [
+            const Icon(Icons.stars_rounded, color: Colors.amber, size: 30),
+            const SizedBox(width: 8),
+            Expanded(child: Text("VIP አባል የመሆኛ ቅደም ተከተል", style: TextStyle(color: textPrimary(context), fontSize: 17, fontWeight: FontWeight.bold))),
           ],
         ),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildStepTile("ደረጃ 1 (Step 1)", "ክፍያ መፈጸም", "ለዓመቱ ሙሉ 500 ብር ወይም ለግማሽ ሴሚስተር 300 ብር በ CBE (1000667301673) ወይም በ Telebirr / CBE Birr (0929698365 - MUBAREK MUSTEFA) ይክፈሉ።", Icons.account_balance_wallet, Colors.amber),
+              _buildStepTile(context, "ደረጃ 1 (Step 1)", "ክፍያ መፈጸም", "ለዓመቱ ሙሉ 500 ብር ወይም ለግማሽ ሴሚስተር 300 ብር በ CBE (1000667301673) ወይም በ Telebirr / CBE Birr (0929698365 - MUBAREK MUSTEFA) ይክፈሉ።", Icons.account_balance_wallet, Colors.orange),
               const SizedBox(height: 12),
-              _buildStepTile("ደረጃ 2 (Step 2)", "ደረሰኝ መላክ (Screenshot)", "ከታች ያለውን 'አሁኑኑ ተመዝገብ' የሚለውን ቁልፍ ተጭነው የከፈሉበትን ደረሰኝ ፎቶ (Screenshot) አያይዘው ይላኩ።", Icons.camera_alt_rounded, Colors.cyanAccent),
+              _buildStepTile(context, "ደረጃ 2 (Step 2)", "ደረሰኝ መላክ (Screenshot)", "ከታች ያለውን 'አሁኑኑ ተመዝገብ' የሚለውን ቁልፍ ተጭነው የከፈሉበትን ደረሰኝ ፎቶ (Screenshot) አያይዘው ይላኩ።", Icons.camera_alt_rounded, Colors.blue),
               const SizedBox(height: 12),
-              _buildStepTile("ደረጃ 3 (Step 3)", "ወዲያውኑ VIP መሆን", "ክፍያዎ እንደታየ ወዲያውኑ ሁሉም ፈተናዎች፣ 퀴ዞች እና የቴሌግራም VIP ቲቶሪያል ክፍሎች ይከፈቱልዎታል!", Icons.verified_rounded, Colors.greenAccent),
+              _buildStepTile(context, "ደረጃ 3 (Step 3)", "ወዲያውኑ VIP መሆን", "ክፍያዎ እንደታየ ወዲያውኑ ሁሉም ፈተናዎች፣ ኩዊዞች እና የቴሌግራም VIP ቲቶሪያል ክፍሎች ይከፈቱልዎታል!", Icons.verified_rounded, Colors.green),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("ዝጋ", style: TextStyle(color: Colors.white60))),
+          TextButton(onPressed: () => Navigator.pop(context), child: Text("ዝጋ", style: TextStyle(color: textSecondary(context)))),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
             onPressed: () {
@@ -1216,14 +1483,14 @@ class HomeContent extends StatelessWidget {
     );
   }
 
-  Widget _buildStepTile(String step, String title, String desc, IconData icon, Color color) {
+  Widget _buildStepTile(BuildContext context, String step, String title, String desc, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withOpacity(0.4))),
+      decoration: BoxDecoration(color: surfaceBg(context), borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withOpacity(0.4))),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(backgroundColor: color.withOpacity(0.2), child: Icon(icon, color: color, size: 22)),
+          CircleAvatar(backgroundColor: color.withOpacity(0.18), child: Icon(icon, color: color, size: 22)),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -1231,7 +1498,7 @@ class HomeContent extends StatelessWidget {
               children: [
                 Text("$step: $title", style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14)),
                 const SizedBox(height: 4),
-                Text(desc, style: const TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.4)),
+                Text(desc, style: TextStyle(color: textSecondary(context), fontSize: 12.5, height: 1.4)),
               ],
             ),
           ),
@@ -1251,54 +1518,54 @@ class HomeContent extends StatelessWidget {
       builder: (context) => StatefulBuilder(
         builder: (context, setStateDialog) {
           return AlertDialog(
-            backgroundColor: const Color(0xFF1E2235),
+            backgroundColor: cardBg(context),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Row(children: const [Icon(Icons.workspace_premium, color: Colors.amber, size: 28), SizedBox(width: 8), Text("Premium Access", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18))]),
+            title: Row(children: [const Icon(Icons.workspace_premium, color: Colors.amber, size: 28), const SizedBox(width: 8), Text("Premium Access", style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 18))]),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (appStatus == 'rejected')
+                  if (widget.appStatus == 'rejected')
                     const Padding(
                       padding: EdgeInsets.only(bottom: 10),
                       child: Text("❌ የላኩት ጥያቄ አልፀደቀም፤ እባክዎ ትክክለኛውን ደረሰኝ ይላኩ።", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 13)),
                     ),
-                  const Text(
+                  Text(
                     "ሰላም premium ሆነው አመቱን ሙሉ ከኛ ጋር ለመማር 500 ብር ለ ግማሽ semester ደሞ 300 ብር ከታች ባሉት accounts ያስገቡና send screen shoot ይበሉት ክፍያው ታይቶ ወዲያም premium ትደረጋላቹ",
-                    style: TextStyle(color: Colors.white, fontSize: 13.5, height: 1.5),
+                    style: TextStyle(color: textPrimary(context), fontSize: 13.5, height: 1.5),
                   ),
                   const SizedBox(height: 15),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF121521),
+                      color: surfaceBg(context),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.amber.withOpacity(0.5)),
+                      border: Border.all(color: Colors.amber.withOpacity(0.6)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text("🏦 CBE = 1000667301673", style: TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
-                        SizedBox(height: 8),
-                        Text("📱 Telebirr = 0929698365", style: TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
-                        SizedBox(height: 8),
-                        Text("📲 CBE birr = 0929698365", style: TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
-                        Divider(color: Colors.white24, height: 16),
-                        Text("👤 Name: MUBAREK MUSTEFA", style: TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold)),
+                      children: [
+                        Text("🏦 CBE = 1000667301673", style: TextStyle(color: isDarkMode(context) ? Colors.amber : Colors.orange.shade900, fontSize: 14, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Text("📱 Telebirr = 0929698365", style: TextStyle(color: isDarkMode(context) ? Colors.amber : Colors.orange.shade900, fontSize: 14, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Text("📲 CBE birr = 0929698365", style: TextStyle(color: isDarkMode(context) ? Colors.amber : Colors.orange.shade900, fontSize: 14, fontWeight: FontWeight.bold)),
+                        Divider(color: borderCol(context), height: 16),
+                        Text("👤 Name: MUBAREK MUSTEFA", style: TextStyle(color: isDarkMode(context) ? Colors.greenAccent : Colors.green.shade700, fontSize: 14, fontWeight: FontWeight.bold)),
                       ],
                     ),
                   ),
                   const SizedBox(height: 15),
-                  if (appStatus == 'pending') ...[
+                  if (widget.appStatus == 'pending') ...[
                     const Center(child: Icon(Icons.hourglass_top, color: Colors.amber, size: 45)),
                     const SizedBox(height: 10),
-                    const Text("⏳ ደረሰኝዎ እየታየ ነው! እባክዎ በትዕግስት ይጠብቁ።", style: TextStyle(color: Colors.white, fontSize: 14), textAlign: TextAlign.center),
+                    Text("⏳ ደረሰኝዎ እየታየ ነው! እባክዎ በትዕግስት ይጠብቁ።", style: TextStyle(color: textPrimary(context), fontSize: 14), textAlign: TextAlign.center),
                   ] else ...[
                     Center(
                       child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blueGrey.shade800, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9), padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
                         onPressed: () async {
                           final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 30);
                           if (image != null) {
@@ -1307,7 +1574,7 @@ class HomeContent extends StatelessWidget {
                             });
                           }
                         },
-                        icon: const Icon(Icons.image, color: Colors.amber),
+                        icon: const Icon(Icons.image, color: Colors.white),
                         label: Text(selectedImage == null ? "ደረሰኝ ምረጥ (Attach Screenshot)" : "✅ ፎቶ ተመርጧል", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                       ),
                     ),
@@ -1320,9 +1587,9 @@ class HomeContent extends StatelessWidget {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("ዝጋ (Close)", style: TextStyle(color: Colors.white70)),
+                child: Text("ዝጋ (Close)", style: TextStyle(color: textSecondary(context))),
               ),
-              if (appStatus != 'pending')
+              if (widget.appStatus != 'pending')
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade700, padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10)),
                   onPressed: isDialogLoading
@@ -1341,7 +1608,7 @@ class HomeContent extends StatelessWidget {
                             await prefs.setString('local_status', 'pending');
                             if (context.mounted) {
                               Navigator.pop(context);
-                              onStatusChange('pending');
+                              widget.onStatusChange('pending');
                               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ ደረሰኝዎ ተልኳል! ክፍያው ሲታይ VIP ይደረጋሉ።"), backgroundColor: Colors.green));
                             }
                           } catch (e) {
@@ -1361,8 +1628,7 @@ class HomeContent extends StatelessWidget {
   }
 
   void _showActivationLogin(BuildContext context) {
-    // አንዴ ፓስወርድህን ካስገባህ በኋላ ባለቤቱ (5053) ቀጥታ ያለ ፓስወርድ ይገባል!
-    if (isAdminCached && isOwnerUser(userShortId, userName)) {
+    if (widget.isAdminCached && isOwnerUser(widget.userShortId, widget.userName)) {
       Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen()));
       return;
     }
@@ -1371,31 +1637,31 @@ class HomeContent extends StatelessWidget {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2235),
-        title: const Text("🔐 Activation & Admin", style: TextStyle(color: Colors.white)),
+        backgroundColor: cardBg(context),
+        title: Text("🔐 Activation & Admin", style: TextStyle(color: textPrimary(context))),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("የእርስዎ መለያ (ID): $userShortId", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+            Text("የእርስዎ መለያ (ID): ${widget.userShortId}", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
-            TextField(controller: pwdCtrl, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: "የመክፈቻ ቁጥር ወይም Admin Password")),
+            TextField(controller: pwdCtrl, obscureText: true, style: TextStyle(color: textPrimary(context)), decoration: const InputDecoration(hintText: "የመክፈቻ ቁጥር ወይም Admin Password")),
           ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.amber),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9)),
             onPressed: () async {
               String input = pwdCtrl.text.trim();
-              int expectedVipCode = userShortId * 3;
-              bool isOwner = isOwnerUser(userShortId, userName);
+              int expectedVipCode = widget.userShortId * 3;
+              bool isOwner = isOwnerUser(widget.userShortId, widget.userName);
 
               if (input == "Matrix@2026") {
                 if (isOwner) {
                   SharedPreferences prefs = await SharedPreferences.getInstance();
                   await prefs.setBool('owner_admin_cached', true);
-                  onAdminCached();
+                  widget.onAdminCached();
                   Navigator.pop(context);
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminDashboardScreen()));
                 } else {
@@ -1408,14 +1674,14 @@ class HomeContent extends StatelessWidget {
                 try {
                   await dbRef("students/$deviceId").update({"status": "vip"});
                 } catch (e) {}
-                onStatusChange('vip');
+                widget.onStatusChange('vip');
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ አፑ በተሳካ ሁኔታ VIP ተደርጓል!"), backgroundColor: Colors.green));
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("❌ ትክክል ያልሆነ መክፈቻ ኮድ!"), backgroundColor: Colors.red));
               }
             },
-            child: const Text("Enter", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+            child: const Text("Enter", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -1424,29 +1690,47 @@ class HomeContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    bool dark = isDarkMode(context);
+    int streak = widget.progressStats['streak'] ?? 1;
+    int totalTopics = widget.progressStats['totalTopics'] ?? 0;
+    int todayTopics = widget.progressStats['todayTopics'] ?? 0;
+    int todayMins = widget.progressStats['todayMinutes'] ?? 0;
+    int points = widget.progressStats['points'] ?? 0;
+    int unlocked = widget.progressStats['unlockedBadges'] ?? 0;
+    double dailyGoalRatio = (todayMins / 25.0).clamp(0.0, 1.0);
+    double challengeRatio = (todayTopics / 3.0).clamp(0.0, 1.0);
+
     String todayDay = getDayName(DateTime.now().weekday);
-    Map streamMap = getDefaultSchedule()[userStream] ?? {};
-    String displaySubject = todayCourse.isNotEmpty
-        ? todayCourse
+    Map streamMap = getDefaultSchedule()[widget.userStream] ?? {};
+    String displaySubject = widget.todayCourse.isNotEmpty
+        ? widget.todayCourse
         : (streamMap[todayDay] ?? "General Study").toString();
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ዋናው ባነር
+          // 1. 🌅 GREETING & DAILY STREAK HERO CARD
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
-              gradient: const LinearGradient(
-                colors: [Color(0xFF3B2667), Color(0xFFBC78EC)],
+              gradient: LinearGradient(
+                colors: dark
+                    ? const [Color(0xFF312A6C), Color(0xFF5F3DC4)]
+                    : const [Color(0xFFFF8F71), Color(0xFFFFB56B), Color(0xFFFFDF73)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              boxShadow: [BoxShadow(color: Colors.purple.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 6))],
+              boxShadow: [
+                BoxShadow(
+                  color: (dark ? Colors.deepPurple : Colors.orange).withOpacity(0.22),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                )
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1454,32 +1738,105 @@ class HomeContent extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(20)),
-                      child: Text("👋 ሰላም፣ $userName", style: const TextStyle(color: Colors.amberAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            getGreetingText(),
+                            style: TextStyle(
+                              color: dark ? Colors.white : const Color(0xFF1E1B4B),
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "ሰላም ${widget.userName} • Small progress is still progress",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: dark ? Colors.white70 : const Color(0xFF3E345C),
+                              fontSize: 12.5,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    Text(isVIP ? "👑 VIP MEMBER" : "FREE PLAN", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: widget.isVIP ? Colors.amber : Colors.black.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        widget.isVIP ? "👑 VIP" : "FREE",
+                        style: TextStyle(
+                          color: widget.isVIP ? Colors.black : (dark ? Colors.white : const Color(0xFF1E1B4B)),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                const Text("Remedial Matrix", style: TextStyle(color: Colors.white, fontSize: 23, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 18),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _heroStat("$streak", "🔥 Day Streak", dark),
+                    _heroStat("$totalTopics", "📚 Topics", dark),
+                    _heroStat("$todayMins", "⏱ Minutes", dark),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "Daily Goal: $todayMins/25 minutes",
+                      style: TextStyle(
+                        color: dark ? Colors.white : const Color(0xFF2B2447),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      "${(dailyGoalRatio * 100).toInt()}%",
+                      style: TextStyle(
+                        color: dark ? Colors.amberAccent : const Color(0xFF2B2447),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 6),
-                Text("📚 የዛሬ ጥናት (${getAmharicDay(todayDay)})፦\n$displaySubject", style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.4)),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: LinearProgressIndicator(
+                    value: dailyGoalRatio,
+                    minHeight: 6,
+                    backgroundColor: Colors.black.withOpacity(0.12),
+                    valueColor: AlwaysStoppedAnimation<Color>(dark ? Colors.amberAccent : const Color(0xFF5B4FE9)),
+                  ),
+                ),
               ],
             ),
           ),
 
-          // ⏳ የ2019 ፈተና ቀን ቆጣሪ (ከአድሚን ገጽ ሲሞላ ይታያል)
-          if (examDaysLeft != null) ...[
+          // ⏳ EXAM COUNTDOWN (IF SET BY ADMIN)
+          if (widget.examDaysLeft != null) ...[
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFF182235),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.cyanAccent.withOpacity(0.5)),
+                color: cardBg(context),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF5B4FE9).withOpacity(0.3)),
+                boxShadow: [if (!dark) BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 3))],
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1488,356 +1845,505 @@ class HomeContent extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text("⏳ $examLabel", style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+                        Text("⏳ ${widget.examLabel}", style: TextStyle(color: dark ? Colors.cyanAccent : const Color(0xFF5B4FE9), fontWeight: FontWeight.bold, fontSize: 13.5)),
                         const SizedBox(height: 2),
-                        const Text("በየቀኑ በፕሮግራምዎ መሰረት ይለማመዱ!", style: TextStyle(color: Colors.white60, fontSize: 11.5)),
+                        Text("በየቀኑ በፕሮግራምዎ መሰረት ይለማመዱ!", style: TextStyle(color: textSecondary(context), fontSize: 11.5)),
                       ],
                     ),
                   ),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(10)),
-                    child: Text("$examDaysLeft ቀን ቀረው", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 13)),
+                    child: Text("${widget.examDaysLeft} ቀን ቀረው", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12.5)),
                   )
                 ],
               ),
             ),
           ],
 
-          const SizedBox(height: 16),
-
-          if (!isVIP)
+          // VIP UPGRADE BANNER (FOR FREE USERS)
+          if (!widget.isVIP) ...[
+            const SizedBox(height: 14),
             InkWell(
               onTap: () => _showRegistrationStepsGuide(context),
               borderRadius: BorderRadius.circular(16),
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
-                  gradient: LinearGradient(colors: [Colors.amber.shade700, Colors.orange.shade900]),
+                  gradient: LinearGradient(colors: [Colors.amber.shade600, Colors.orange.shade800]),
                   boxShadow: [BoxShadow(color: Colors.amber.withOpacity(0.25), blurRadius: 10, offset: const Offset(0, 4))],
                 ),
                 child: Row(
                   children: [
                     const CircleAvatar(
-                      radius: 24,
+                      radius: 22,
                       backgroundColor: Colors.black26,
-                      child: Icon(Icons.how_to_reg_rounded, color: Colors.white, size: 28),
+                      child: Icon(Icons.workspace_premium, color: Colors.white, size: 25),
                     ),
-                    const SizedBox(width: 14),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: const [
-                          Text("🌟 አንድ ላይ ለመመዝገብ (VIP Registration)", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 15.5)),
-                          SizedBox(height: 4),
-                          Text("እንዴት VIP መሆን እንደሚችሉ የአመዘጋገብ ቅደም ተከተሉን (Steps) ለማየት እዚህ ይጫኑ!", style: TextStyle(color: Colors.black87, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                          Text("🌟 VIP አባል ይሁኑ (Unlock All Exams)", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 14.5)),
+                          SizedBox(height: 2),
+                          Text("የአመዘጋገብ ቅደም ተከተሉን (Steps) ለማየት እዚህ ይጫኑ!", style: TextStyle(color: Colors.black87, fontSize: 12, fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
-                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.black, size: 18),
+                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.black, size: 16),
                   ],
                 ),
               ),
             ),
+          ],
 
-          const SizedBox(height: 20),
-          const Text("✨ Main Learning Modules", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 18),
 
+          // 2. 📚 MAIN 2x2 FEATURE CARDS (CLEAN MODERN DESIGN)
           GridView.count(
             crossAxisCount: 2,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            childAspectRatio: 1.12,
+            childAspectRatio: 1.18,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             children: [
-              _buildGridItem(context, "📅 ፕሮግራም & Outline", "2019 All Courses", Icons.calendar_month_rounded, Colors.cyanAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => StudyScheduleScreen(userStream: userStream)))),
-              _buildGridItem(context, "🆕 Model Exams", "2017, 2018 & Live", Icons.library_books_rounded, Colors.blueAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams')))),
-              _buildGridItem(context, "📖 Remedial Exams", "Past Papers", Icons.school_rounded, Colors.tealAccent, !isVIP, () {
-                if (!isVIP) _showPremiumDialog(context);
-                else Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'remedial_exams', title: 'Remedial Exams')));
-              }),
-              _buildGridItem(context, "🧠 Exam Trainer", "Smart Practice", Icons.psychology_rounded, Colors.purpleAccent, !isVIP, () {
-                if (!isVIP) _showPremiumDialog(context);
-                else Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'trainer', year: '2018', title: 'Exam Trainer')));
-              }),
-              _buildGridItem(context, "📝 Quizzes", "Fast Tests", Icons.quiz_rounded, Colors.orangeAccent, !isVIP, () {
-                if (!isVIP) _showPremiumDialog(context);
-                else Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'quizzes', year: '2018', title: 'Quizzes')));
-              }),
-              _buildGridItem(context, "🔖 Saved Questions", "Bookmarked Review", Icons.bookmark_rounded, Colors.amberAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SavedQuestionsScreen()))),
-              _buildGridItem(context, "⏱ Study Timer", "Pomodoro 25/5", Icons.timer_rounded, Colors.lightGreenAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PomodoroTimerScreen()))),
-              _buildGridItem(context, "📚 Notes & Videos", "Free Samples", Icons.play_lesson_rounded, Colors.redAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SampleMaterialsScreen()))),
-              _buildGridItem(context, "🏆 Leaderboard", "Top 10 Students", Icons.emoji_events_rounded, Colors.amber, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeaderboardScreen()))),
-              _buildGridItem(context, "💡 Study Tips", "Smart Advice", Icons.lightbulb_rounded, Colors.pinkAccent, false, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StudyTipsScreen()))),
+              _buildModernTile(
+                context,
+                title: "Syllabus & Schedule",
+                subtitle: "2019 All Courses",
+                icon: Icons.menu_book_rounded,
+                color: Colors.orange,
+                isLocked: false,
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StudyScheduleScreen(userStream: widget.userStream, onMarkedDone: widget.onProgressRefresh))),
+              ),
+              _buildModernTile(
+                context,
+                title: "Model Exams",
+                subtitle: "2017, 2018 & 2019 NEW",
+                icon: Icons.play_circle_outline_rounded,
+                color: Colors.purple,
+                isLocked: false,
+                badgeText: "2019",
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams'))).then((_) => widget.onProgressRefresh()),
+              ),
+              _buildModernTile(
+                context,
+                title: "Remedial Exams",
+                subtitle: "2015–2019 Past Papers",
+                icon: Icons.school_rounded,
+                color: Colors.green,
+                isLocked: !widget.isVIP,
+                onTap: () {
+                  if (!widget.isVIP) _showPremiumDialog(context);
+                  else Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'remedial_exams', title: 'Remedial Exams'))).then((_) => widget.onProgressRefresh());
+                },
+              ),
+              _buildModernTile(
+                context,
+                title: "Exam Trainer",
+                subtitle: "Smart Practice",
+                icon: Icons.psychology_rounded,
+                color: Colors.blue,
+                isLocked: !widget.isVIP,
+                onTap: () {
+                  if (!widget.isVIP) _showPremiumDialog(context);
+                  else Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'trainer', year: '2019', title: 'Exam Trainer'))).then((_) => widget.onProgressRefresh());
+                },
+              ),
+              _buildModernTile(
+                context,
+                title: "Quick Quizzes",
+                subtitle: "Fast Tests",
+                icon: Icons.help_outline_rounded,
+                color: Colors.teal,
+                isLocked: !widget.isVIP,
+                onTap: () {
+                  if (!widget.isVIP) _showPremiumDialog(context);
+                  else Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'quizzes', year: '2019', title: 'Quizzes'))).then((_) => widget.onProgressRefresh());
+                },
+              ),
+              _buildModernTile(
+                context,
+                title: "Notes & Videos",
+                subtitle: "Free Samples",
+                icon: Icons.video_library_rounded,
+                color: Colors.redAccent,
+                isLocked: false,
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SampleMaterialsScreen())),
+              ),
             ],
           ),
 
-          const SizedBox(height: 18),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.indigoAccent.shade700,
-              minimumSize: const Size(double.infinity, 52),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-            onPressed: () async {
-              if (!isVIP) {
-                _showPremiumDialog(context);
-              } else {
-                await launchUrl(Uri.parse('https://t.me/+yQdJM7LxN8VmNWY0'), mode: LaunchMode.externalApplication);
-              }
-            },
-            icon: Icon(isVIP ? Icons.ondemand_video : Icons.lock, color: Colors.white),
-            label: const Text("Go to VIP Tutorial Class", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+
+          // 3. 🏆 LEADERBOARD & STUDY TIPS BANNER BUTTONS (LIKE SCREENSHOT)
+          _buildGradientBannerButton(
+            title: "Quiz Leaderboard",
+            subtitle: "Compete with Top 10 Remedial Students!",
+            icon: Icons.emoji_events_rounded,
+            iconColor: Colors.amber,
+            colors: const [Color(0xFF5B55D6), Color(0xFF7B6CF6)],
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeaderboardScreen())),
           ),
           const SizedBox(height: 10),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1A3A4A),
-              minimumSize: const Size(double.infinity, 48),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: const BorderSide(color: Colors.cyanAccent, width: 1)),
+          _buildGradientBannerButton(
+            title: "Study Tips & Today's Plan",
+            subtitle: displaySubject.replaceAll('\n', ' '),
+            icon: Icons.lightbulb_rounded,
+            iconColor: Colors.amberAccent,
+            colors: const [Color(0xFF4E54C8), Color(0xFF6C63FF)],
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StudyTipsScreen())),
+          ),
+
+          const SizedBox(height: 16),
+
+          // 4. 🎯 TODAY'S CHALLENGE CARD
+          InkWell(
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams'))).then((_) => widget.onProgressRefresh()),
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: dark ? const Color(0xFF281D33) : const Color(0xFFFFE5F1),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: dark ? Colors.pinkAccent.withOpacity(0.3) : Colors.pink.shade100),
+                boxShadow: [if (!dark) BoxShadow(color: Colors.pink.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 4))],
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(color: Colors.pinkAccent.withOpacity(0.15), shape: BoxShape.circle),
+                        child: const Icon(Icons.track_changes_rounded, color: Colors.pinkAccent, size: 28),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("Today's Challenge", style: TextStyle(color: dark ? Colors.white : const Color(0xFF241B4B), fontSize: 16, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 2),
+                            Text("Complete 3 topics or quizzes today", style: TextStyle(color: dark ? Colors.white70 : const Color(0xFF5D4C7A), fontSize: 12.5)),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.arrow_forward_rounded, color: dark ? Colors.pinkAccent : const Color(0xFF241B4B)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Text(_timeLeftToday, style: TextStyle(color: dark ? Colors.white60 : const Color(0xFF6B5B87), fontSize: 11.5, fontWeight: FontWeight.w600)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: LinearProgressIndicator(
+                            value: challengeRatio,
+                            minHeight: 6,
+                            backgroundColor: dark ? Colors.white12 : Colors.white70,
+                            valueColor: const AlwaysStoppedAnimation<Color>(Colors.pinkAccent),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text("${todayTopics.clamp(0, 3)}/3", style: TextStyle(color: dark ? Colors.white : const Color(0xFF241B4B), fontWeight: FontWeight.bold, fontSize: 13)),
+                    ],
+                  ),
+                ],
+              ),
             ),
-            onPressed: () => shareRemedialMatrixApp(context),
-            icon: const Icon(Icons.share_rounded, color: Colors.cyanAccent),
-            label: const Text("📤 ለጓደኞችህ አጋራ (Share App)", style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.amber,
-                    side: const BorderSide(color: Colors.amber),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onPressed: () => launchUrl(Uri.parse('https://t.me/Rmedial_matrix_support'), mode: LaunchMode.externalApplication),
-                  icon: const Icon(Icons.support_agent, size: 18),
-                  label: const Text("Support", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+
+          const SizedBox(height: 16),
+
+          // 5. 🏆 ACHIEVEMENTS & POINTS CARD
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: cardBg(context),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: borderCol(context)),
+              boxShadow: [if (!dark) BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        const Text("🏆", style: TextStyle(fontSize: 20)),
+                        const SizedBox(width: 8),
+                        Text("Achievements", style: TextStyle(color: textPrimary(context), fontSize: 16.5, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    Text("$unlocked/4", style: TextStyle(color: textSecondary(context), fontWeight: FontWeight.bold)),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.greenAccent,
-                    side: const BorderSide(color: Colors.greenAccent),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(color: surfaceBg(context), borderRadius: BorderRadius.circular(12)),
+                  child: Row(
+                    children: [
+                      const Text("💎", style: TextStyle(fontSize: 18)),
+                      const SizedBox(width: 8),
+                      Text("Your Points: $points", style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 14.5)),
+                    ],
                   ),
-                  onPressed: () => _showActivationLogin(context),
-                  icon: Icon(isAdminCached ? Icons.admin_panel_settings : Icons.vpn_key, size: 18),
-                  label: Text(isAdminCached ? "Admin Panel" : "Code / Admin", style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _badgeItem(context, "First Step", Icons.flag_rounded, Colors.redAccent, widget.progressStats['bFirstStep'] == true),
+                    _badgeItem(context, "7 Days", Icons.local_fire_department_rounded, Colors.orange, widget.progressStats['bSevenDays'] == true),
+                    _badgeItem(context, "Quiz Pro", Icons.auto_awesome_rounded, Colors.purpleAccent, widget.progressStats['bQuizPro'] == true),
+                    _badgeItem(context, "Master", Icons.workspace_premium_rounded, Colors.amber, widget.progressStats['bMaster'] == true),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(color: surfaceBg(context), borderRadius: BorderRadius.circular(10)),
+                  child: Text(
+                    unlocked == 0
+                        ? "✨ Start studying or take a 2019 Model Exam to earn your first badge!"
+                        : "✨ Great job! Keep practicing daily to unlock all 4 badges!",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: textSecondary(context), fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 20),
+
+          const SizedBox(height: 16),
+
+          // 6. 💼 QUICK ACTIONS & TOOLS CARD (BOOKMARKS, SHARE, VIP CLASS, SUPPORT)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: cardBg(context),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: borderCol(context)),
+              boxShadow: [if (!dark) BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text("💼", style: TextStyle(fontSize: 18)),
+                    const SizedBox(width: 8),
+                    Text("Quick Actions & Tools", style: TextStyle(color: textPrimary(context), fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                GridView.count(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: 1.55,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [
+                    _actionBox(context, "Bookmarks", Icons.star_rounded, Colors.amber, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SavedQuestionsScreen()))),
+                    _actionBox(context, "Share App", Icons.card_giftcard_rounded, Colors.pinkAccent, () => shareRemedialMatrixApp(context)),
+                    _actionBox(context, widget.isVIP ? "VIP Class" : "VIP Class 🔒", Icons.ondemand_video_rounded, Colors.indigoAccent, () async {
+                      if (!widget.isVIP) _showPremiumDialog(context);
+                      else await launchUrl(Uri.parse('https://t.me/+yQdJM7LxN8VmNWY0'), mode: LaunchMode.externalApplication);
+                    }),
+                    _actionBox(context, "Support", Icons.support_agent_rounded, Colors.teal, () => launchUrl(Uri.parse('https://t.me/Rmedial_matrix_support'), mode: LaunchMode.externalApplication)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: dark ? Colors.greenAccent : const Color(0xFF5B4FE9),
+                      side: BorderSide(color: dark ? Colors.greenAccent : const Color(0xFF5B4FE9)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => _showActivationLogin(context),
+                    icon: Icon(widget.isAdminCached ? Icons.admin_panel_settings : Icons.vpn_key, size: 18),
+                    label: Text(widget.isAdminCached ? "Open Admin Control Center" : "VIP Activation Code / Admin", style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildGridItem(BuildContext context, String title, String subtitle, IconData icon, Color color, bool isLocked, VoidCallback onTap) {
+  Widget _heroStat(String val, String label, bool dark) {
+    return Column(
+      children: [
+        Text(val, style: TextStyle(color: dark ? Colors.white : const Color(0xFF1E1B4B), fontSize: 22, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 2),
+        Text(label, style: TextStyle(color: dark ? Colors.white70 : const Color(0xFF3E345C), fontSize: 11.5, fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+
+  Widget _buildModernTile(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    required bool isLocked,
+    String? badgeText,
+    required VoidCallback onTap,
+  }) {
+    bool dark = isDarkMode(context);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFF181B28),
+          color: cardBg(context),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: color.withOpacity(0.35), width: 1.5),
-          boxShadow: [BoxShadow(color: color.withOpacity(0.08), blurRadius: 8, offset: const Offset(0, 4))],
+          border: Border.all(color: borderCol(context)),
+          boxShadow: [if (!dark) BoxShadow(color: Colors.black.withOpacity(0.045), blurRadius: 10, offset: const Offset(0, 4))],
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Stack(
           children: [
-            Stack(
-              alignment: Alignment.topRight,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color: color.withOpacity(0.15), shape: BoxShape.circle),
-                  child: Icon(icon, size: 28, color: color),
-                ),
-                if (isLocked)
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
                   Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: const BoxDecoration(color: Colors.black87, shape: BoxShape.circle),
-                    child: const Icon(Icons.lock, color: Colors.amber, size: 14),
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(color: color.withOpacity(0.13), shape: BoxShape.circle),
+                    child: Icon(icon, size: 28, color: color),
                   ),
-              ],
+                  const SizedBox(height: 10),
+                  Text(title, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: textPrimary(context), fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: textSecondary(context), fontSize: 11)),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 2),
-            Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 10.5)),
+            if (isLocked)
+              Positioned(
+                top: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(color: Colors.amber.withOpacity(0.2), shape: BoxShape.circle),
+                  child: const Icon(Icons.lock_rounded, color: Colors.amber, size: 15),
+                ),
+              )
+            else if (badgeText != null)
+              Positioned(
+                top: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(8)),
+                  child: Text(badgeText, style: const TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.bold)),
+                ),
+              ),
           ],
         ),
       ),
     );
   }
-}
 
-// ============================================================================
-// ⏱ POMODORO STUDY TIMER (25 MIN STUDY / 5 MIN BREAK)
-// ============================================================================
-class PomodoroTimerScreen extends StatefulWidget {
-  const PomodoroTimerScreen({Key? key}) : super(key: key);
-  @override
-  _PomodoroTimerScreenState createState() => _PomodoroTimerScreenState();
-}
-
-class _PomodoroTimerScreenState extends State<PomodoroTimerScreen> {
-  static const int studySeconds = 25 * 60;
-  static const int breakSeconds = 5 * 60;
-
-  int remaining = studySeconds;
-  bool isStudyMode = true;
-  bool isRunning = false;
-  Timer? _timer;
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
+  Widget _buildGradientBannerButton({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color iconColor,
+    required List<Color> colors,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(colors: colors, begin: Alignment.centerLeft, end: Alignment.centerRight),
+          boxShadow: [BoxShadow(color: colors.first.withOpacity(0.25), blurRadius: 10, offset: const Offset(0, 4))],
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: iconColor, size: 28),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(color: Colors.white, fontSize: 15.5, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: Colors.white, size: 24),
+          ],
+        ),
+      ),
+    );
   }
 
-  void _toggleTimer() {
-    if (isRunning) {
-      _timer?.cancel();
-      setState(() => isRunning = false);
-    } else {
-      setState(() => isRunning = true);
-      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (remaining > 0) {
-          if (mounted) setState(() => remaining--);
-        } else {
-          timer.cancel();
-          _showLocalBanner(
-            isStudyMode ? '🎉 የ25 ደቂቃ ጥናት አለቀ!' : '📚 የእረፍት ሰዓት አለቀ!',
-            isStudyMode ? 'አሁን ለ5 ደቂቃ እረፍት ይውሰዱ!' : 'ቀጣዩን የ25 ደቂቃ ጥናት ይጀምሩ!',
-            id: 777,
-          );
-          if (mounted) {
-            setState(() {
-              isRunning = false;
-              isStudyMode = !isStudyMode;
-              remaining = isStudyMode ? studySeconds : breakSeconds;
-            });
-          }
-        }
-      });
-    }
+  Widget _badgeItem(BuildContext context, String label, IconData icon, Color color, bool unlocked) {
+    return Column(
+      children: [
+        Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: unlocked ? color.withOpacity(0.18) : surfaceBg(context),
+            border: Border.all(color: unlocked ? color : borderCol(context), width: 1.5),
+          ),
+          child: Icon(unlocked ? icon : Icons.lock_outline_rounded, color: unlocked ? color : Colors.grey, size: 24),
+        ),
+        const SizedBox(height: 6),
+        Text(label, style: TextStyle(color: unlocked ? textPrimary(context) : textSecondary(context), fontSize: 11, fontWeight: unlocked ? FontWeight.bold : FontWeight.normal)),
+      ],
+    );
   }
 
-  void _resetTimer() {
-    _timer?.cancel();
-    setState(() {
-      isRunning = false;
-      remaining = isStudyMode ? studySeconds : breakSeconds;
-    });
-  }
-
-  void _switchMode(bool study) {
-    _timer?.cancel();
-    setState(() {
-      isRunning = false;
-      isStudyMode = study;
-      remaining = study ? studySeconds : breakSeconds;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    int total = isStudyMode ? studySeconds : breakSeconds;
-    double progress = remaining / total;
-    int m = remaining ~/ 60;
-    int s = remaining % 60;
-    String timeStr = '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-
-    return Scaffold(
-      appBar: AppBar(title: const Text("⏱ Pomodoro Study Timer")),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
+  Widget _actionBox(BuildContext context, String label, IconData icon, Color color, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        decoration: BoxDecoration(
+          color: surfaceBg(context),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderCol(context)),
+        ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ChoiceChip(
-                  label: const Text("📚 25 min Study"),
-                  selected: isStudyMode,
-                  selectedColor: Colors.amber,
-                  labelStyle: TextStyle(color: isStudyMode ? Colors.black : Colors.white, fontWeight: FontWeight.bold),
-                  onSelected: (_) => _switchMode(true),
-                ),
-                const SizedBox(width: 12),
-                ChoiceChip(
-                  label: const Text("☕ 5 min Break"),
-                  selected: !isStudyMode,
-                  selectedColor: Colors.greenAccent,
-                  labelStyle: TextStyle(color: !isStudyMode ? Colors.black : Colors.white, fontWeight: FontWeight.bold),
-                  onSelected: (_) => _switchMode(false),
-                ),
-              ],
-            ),
-            const SizedBox(height: 40),
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                SizedBox(
-                  height: 220,
-                  width: 220,
-                  child: CircularProgressIndicator(
-                    value: progress,
-                    strokeWidth: 12,
-                    backgroundColor: Colors.white12,
-                    valueColor: AlwaysStoppedAnimation<Color>(isStudyMode ? Colors.amber : Colors.greenAccent),
-                  ),
-                ),
-                Column(
-                  children: [
-                    Text(timeStr, style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Colors.white)),
-                    Text(isStudyMode ? "Focus Time" : "Break Time", style: const TextStyle(color: Colors.white60, fontSize: 15)),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 45),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isRunning ? Colors.orange : Colors.green,
-                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                  onPressed: _toggleTimer,
-                  icon: Icon(isRunning ? Icons.pause : Icons.play_arrow, color: Colors.white),
-                  label: Text(isRunning ? "Pause" : "Start", style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(width: 16),
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white70,
-                    side: const BorderSide(color: Colors.white30),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                  onPressed: _resetTimer,
-                  icon: const Icon(Icons.replay),
-                  label: const Text("Reset"),
-                ),
-              ],
-            ),
+            Icon(icon, color: color, size: 26),
+            const SizedBox(height: 6),
+            Text(label, style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 12.5)),
           ],
         ),
       ),
@@ -1882,10 +2388,10 @@ class _SavedQuestionsScreenState extends State<SavedQuestionsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text("🔖 Saved Questions")),
       body: saved.isEmpty
-          ? const Center(
+          ? Center(
               child: Padding(
-                padding: EdgeInsets.all(24.0),
-                child: Text("እስካሁን የተቀመጠ ጥያቄ የለም!\nፈተና ሲሰሩ የከበደዎትን ጥያቄ ከላይ ያለውን ⭐ ምልክት ነክተው ማስቀመጥ ይችላሉ።", textAlign: TextAlign.center, style: TextStyle(color: Colors.white60, height: 1.5)),
+                padding: const EdgeInsets.all(24.0),
+                child: Text("እስካሁን የተቀመጠ ጥያቄ የለም!\nፈተና ሲሰሩ የከበደዎትን ጥያቄ ከላይ ያለውን ⭐ ምልክት ነክተው ማስቀመጥ ይችላሉ።", textAlign: TextAlign.center, style: TextStyle(color: textSecondary(context), height: 1.5)),
               ),
             )
           : ListView.builder(
@@ -1896,8 +2402,9 @@ class _SavedQuestionsScreenState extends State<SavedQuestionsScreen> {
                 List opts = (q['options'] is List) ? q['options'] : [];
                 int correctId = int.tryParse(q['correct_option_id']?.toString() ?? '0') ?? 0;
                 return Card(
-                  color: const Color(0xFF181B28),
+                  color: cardBg(context),
                   margin: const EdgeInsets.only(bottom: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: borderCol(context))),
                   child: Padding(
                     padding: const EdgeInsets.all(14.0),
                     child: Column(
@@ -1906,19 +2413,19 @@ class _SavedQuestionsScreenState extends State<SavedQuestionsScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text("📘 ${q['subject'] ?? 'Subject'}", style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 12.5)),
+                            Text("📘 ${q['subject'] ?? 'Subject'}", style: const TextStyle(color: Color(0xFF5B4FE9), fontWeight: FontWeight.bold, fontSize: 12.5)),
                             IconButton(
                               icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
                               onPressed: () => _removeBookmark(i),
                             )
                           ],
                         ),
-                        Text((q['question'] ?? '').toString(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15.5)),
+                        Text((q['question'] ?? '').toString(), style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 15.5)),
                         const SizedBox(height: 8),
                         if (opts.length > correctId)
-                          Text("✅ መልስ: ${opts[correctId]}", style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                          Text("✅ መልስ: ${opts[correctId]}", style: TextStyle(color: isDarkMode(context) ? Colors.greenAccent : Colors.green.shade700, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 6),
-                        Text("💡 ${(q['explanation'] ?? 'ማብራሪያ የለውም').toString()}", style: const TextStyle(color: Colors.amber, fontSize: 13)),
+                        Text("💡 ${(q['explanation'] ?? 'ማብራሪያ የለውም').toString()}", style: TextStyle(color: isDarkMode(context) ? Colors.amber : Colors.orange.shade900, fontSize: 13)),
                       ],
                     ),
                   ),
@@ -1931,7 +2438,8 @@ class _SavedQuestionsScreenState extends State<SavedQuestionsScreen> {
 
 class StudyScheduleScreen extends StatefulWidget {
   final String userStream;
-  const StudyScheduleScreen({Key? key, required this.userStream}) : super(key: key);
+  final VoidCallback? onMarkedDone;
+  const StudyScheduleScreen({Key? key, required this.userStream, this.onMarkedDone}) : super(key: key);
   @override
   _StudyScheduleScreenState createState() => _StudyScheduleScreenState();
 }
@@ -1987,13 +2495,18 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
     setState(() {
       completedDays[day] = !current;
     });
-    if (!current && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("✅ የ${getAmharicDay(day)} ኮርስ ማንበብዎ ተመዝግቧል!"), backgroundColor: Colors.green));
+    if (!current) {
+      await StudyProgress.recordActivity(topicsDelta: 1, pointsDelta: 15);
+      widget.onMarkedDone?.call();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("✅ የ${getAmharicDay(day)} ኮርስ ማንበብዎ ተመዝግቧል! (+15 pts)"), backgroundColor: Colors.green));
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    bool dark = isDarkMode(context);
     String todayName = getDayName(DateTime.now().weekday);
     List<String> streamSubjects = selectedStream == "Natural"
         ? ["Mathematics", "Physics", "Chemistry", "Biology", "English"]
@@ -2007,9 +2520,9 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
           actions: [
             DropdownButton<String>(
               value: selectedStream,
-              dropdownColor: const Color(0xFF1E2235),
+              dropdownColor: cardBg(context),
               underline: const SizedBox(),
-              style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),
+              style: TextStyle(color: dark ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.bold),
               items: const [
                 DropdownMenuItem(value: "Natural", child: Text("🔬 Natural ")),
                 DropdownMenuItem(value: "Social", child: Text("🌍 Social ")),
@@ -2023,11 +2536,11 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
             ),
             const SizedBox(width: 10),
           ],
-          bottom: const TabBar(
-            indicatorColor: Colors.amber,
-            labelColor: Colors.amber,
-            unselectedLabelColor: Colors.white60,
-            tabs: [
+          bottom: TabBar(
+            indicatorColor: dark ? Colors.amber : const Color(0xFF5B4FE9),
+            labelColor: dark ? Colors.amber : const Color(0xFF5B4FE9),
+            unselectedLabelColor: textSecondary(context),
+            tabs: const [
               Tab(icon: Icon(Icons.calendar_today, size: 18), text: "ሳምንታዊ ፕሮግራም"),
               Tab(icon: Icon(Icons.menu_book, size: 18), text: "2019 Course Outline"),
             ],
@@ -2036,7 +2549,7 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
         body: TabBarView(
           children: [
             isLoading
-                ? const Center(child: CircularProgressIndicator(color: Colors.amber))
+                ? const Center(child: CircularProgressIndicator())
                 : ListView.builder(
                     padding: const EdgeInsets.all(16),
                     itemCount: daysOrder.length,
@@ -2049,46 +2562,45 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
                       return Container(
                         margin: const EdgeInsets.only(bottom: 12),
                         decoration: BoxDecoration(
-                          color: isToday ? const Color(0xFF232B45) : const Color(0xFF181B28),
+                          color: cardBg(context),
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: isToday ? Colors.amber : Colors.white12, width: isToday ? 2 : 1),
+                          border: Border.all(color: isToday ? const Color(0xFF5B4FE9) : borderCol(context), width: isToday ? 2 : 1),
                         ),
                         child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                           leading: CircleAvatar(
-                            backgroundColor: isDone ? Colors.green : (isToday ? Colors.amber : Colors.blueGrey.shade800),
-                            child: Icon(isDone ? Icons.check : Icons.menu_book_rounded, color: isDone || isToday ? Colors.black : Colors.white),
+                            backgroundColor: isDone ? Colors.green : (isToday ? const Color(0xFF5B4FE9) : surfaceBg(context)),
+                            child: Icon(isDone ? Icons.check : Icons.menu_book_rounded, color: isDone || isToday ? Colors.white : textSecondary(context)),
                           ),
                           title: Row(
                             children: [
-                              Text(getAmharicDay(day), style: TextStyle(color: isToday ? Colors.amber : Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                              Flexible(child: Text(getAmharicDay(day), style: TextStyle(color: isToday ? (dark ? Colors.amber : const Color(0xFF5B4FE9)) : textPrimary(context), fontWeight: FontWeight.bold, fontSize: 14.5))),
                               if (isToday) ...[
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 6),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                  decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(10)),
-                                  child: const Text("ዛሬ (Today)", style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(8)),
+                                  child: const Text("ዛሬ", style: TextStyle(color: Colors.black, fontSize: 10.5, fontWeight: FontWeight.bold)),
                                 ),
                               ]
                             ],
                           ),
                           subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 8.0),
-                            child: Text(course, style: const TextStyle(color: Colors.greenAccent, fontSize: 13.5, fontWeight: FontWeight.w600, height: 1.4)),
+                            padding: const EdgeInsets.only(top: 6.0),
+                            child: Text(course, style: TextStyle(color: textSecondary(context), fontSize: 13, height: 1.4)),
                           ),
                           trailing: ElevatedButton(
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: isDone ? Colors.green.shade700 : Colors.grey.shade800,
+                              backgroundColor: isDone ? Colors.green.shade600 : (dark ? Colors.grey.shade800 : const Color(0xFFE7EAF6)),
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                             ),
                             onPressed: () => _toggleDayRead(day),
-                            child: Text(isDone ? "አንብቤያለሁ ✅" : "አላነበብኩም", style: const TextStyle(fontSize: 11.5, color: Colors.white)),
+                            child: Text(isDone ? "አንብቤያለሁ ✅" : "አላነበብኩም", style: TextStyle(fontSize: 11, color: isDone ? Colors.white : textPrimary(context))),
                           ),
                         ),
                       );
                     },
                   ),
-
             ListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: streamSubjects.length,
@@ -2096,27 +2608,27 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
                 String subject = streamSubjects[idx];
                 List units = (officialCourseOutlines[subject] as List?) ?? [];
                 return Card(
-                  color: const Color(0xFF181B28),
+                  color: cardBg(context),
                   margin: const EdgeInsets.only(bottom: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: const BorderSide(color: Colors.white12)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: borderCol(context))),
                   child: ExpansionTile(
-                    collapsedIconColor: Colors.amber,
-                    iconColor: Colors.cyanAccent,
-                    leading: const CircleAvatar(backgroundColor: Colors.amber, child: Icon(Icons.auto_stories, color: Colors.black)),
-                    title: Text("$subject Syllabus", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                    subtitle: Text("${units.length} Official MoE Units", style: const TextStyle(color: Colors.cyanAccent, fontSize: 12)),
+                    collapsedIconColor: const Color(0xFF5B4FE9),
+                    iconColor: Colors.amber,
+                    leading: const CircleAvatar(backgroundColor: Color(0xFF5B4FE9), child: Icon(Icons.auto_stories, color: Colors.white)),
+                    title: Text("$subject Syllabus", style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 16)),
+                    subtitle: Text("${units.length} Official MoE Units", style: TextStyle(color: dark ? Colors.cyanAccent : const Color(0xFF5B4FE9), fontSize: 12)),
                     children: units.map<Widget>((u) {
                       Map unitMap = u as Map;
                       return Container(
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        decoration: const BoxDecoration(border: Border(top: BorderSide(color: Colors.white10))),
+                        decoration: BoxDecoration(border: Border(top: BorderSide(color: borderCol(context)))),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text((unitMap["unit"] ?? "").toString(), style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 14)),
+                            Text((unitMap["unit"] ?? "").toString(), style: TextStyle(color: dark ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.bold, fontSize: 14)),
                             const SizedBox(height: 6),
-                            Text((unitMap["topics"] ?? "").toString(), style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4)),
+                            Text((unitMap["topics"] ?? "").toString(), style: TextStyle(color: textSecondary(context), fontSize: 13, height: 1.4)),
                           ],
                         ),
                       );
@@ -2133,14 +2645,24 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
 }
 
 // ============================================================================
-// 👤 PROFILE + PERFORMANCE ANALYTICS
+// 👤 PROFILE + PERFORMANCE ANALYTICS + THEME SWITCH
 // ============================================================================
 class ProfileContent extends StatefulWidget {
   final String userName;
   final int userShortId;
   final String appStatus;
   final String userStream;
-  const ProfileContent({Key? key, required this.userName, required this.userShortId, required this.appStatus, required this.userStream}) : super(key: key);
+  final int points;
+  final int streak;
+  const ProfileContent({
+    Key? key,
+    required this.userName,
+    required this.userShortId,
+    required this.appStatus,
+    required this.userStream,
+    required this.points,
+    required this.streak,
+  }) : super(key: key);
 
   @override
   _ProfileContentState createState() => _ProfileContentState();
@@ -2166,47 +2688,64 @@ class _ProfileContentState extends State<ProfileContent> {
   @override
   Widget build(BuildContext context) {
     bool isVip = widget.appStatus == 'vip';
+    bool dark = isDarkMode(context);
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20.0),
       child: Column(
         children: [
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           CircleAvatar(
-            radius: 48,
-            backgroundColor: isVip ? Colors.amber : Colors.blueGrey,
-            child: Icon(isVip ? Icons.workspace_premium : Icons.person, size: 50, color: Colors.black),
+            radius: 46,
+            backgroundColor: isVip ? Colors.amber : const Color(0xFF5B4FE9),
+            child: Icon(isVip ? Icons.workspace_premium : Icons.person, size: 48, color: isVip ? Colors.black : Colors.white),
           ),
-          const SizedBox(height: 16),
-          Text(widget.userName, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 14),
+          Text(widget.userName, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: textPrimary(context))),
           const SizedBox(height: 4),
-          Text("Stream: ${widget.userStream} Science", style: const TextStyle(fontSize: 14, color: Colors.cyanAccent)),
+          Text("Stream: ${widget.userStream} Science", style: TextStyle(fontSize: 14, color: dark ? Colors.cyanAccent : const Color(0xFF5B4FE9))),
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            decoration: BoxDecoration(color: const Color(0xFF181B28), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.amber.withOpacity(0.5))),
-            child: Text("Student ID: ${widget.userShortId}", style: const TextStyle(fontSize: 17, color: Colors.greenAccent, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+            decoration: BoxDecoration(color: cardBg(context), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.amber.withOpacity(0.6))),
+            child: Text("Student ID: ${widget.userShortId}", style: TextStyle(fontSize: 16, color: dark ? Colors.greenAccent : Colors.green.shade700, fontWeight: FontWeight.bold, letterSpacing: 1.4)),
           ),
           const SizedBox(height: 10),
-          Text("Account Status: ${widget.appStatus.toUpperCase()}  |  v$APP_VERSION", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: isVip ? Colors.amber : Colors.white70)),
+          Text("Status: ${widget.appStatus.toUpperCase()}  |  v$APP_VERSION  |  💎 ${widget.points} Pts  |  🔥 ${widget.streak}d", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: textSecondary(context))),
           const SizedBox(height: 16),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.cyanAccent.shade700, minimumSize: const Size(double.infinity, 46)),
-            onPressed: () => shareRemedialMatrixApp(context),
-            icon: const Icon(Icons.share, color: Colors.black),
-            label: const Text("📤 ለጓደኞችህ አጋራ (Share App)", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+
+          // 🌗 Dark/Light Mode Switch Tile
+          Container(
+            decoration: BoxDecoration(color: cardBg(context), borderRadius: BorderRadius.circular(14), border: Border.all(color: borderCol(context))),
+            child: SwitchListTile(
+              secondary: Icon(dark ? Icons.dark_mode_rounded : Icons.light_mode_rounded, color: dark ? Colors.amber : const Color(0xFF5B4FE9)),
+              title: Text(dark ? "Dark Mode (የማታ ገጽታ)" : "Light Mode (የቀን ገጽታ)", style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 14.5)),
+              subtitle: Text("ገጽታውን በአንድ ንክኪ ይቀይሩ", style: TextStyle(color: textSecondary(context), fontSize: 12)),
+              value: dark,
+              activeColor: Colors.amber,
+              onChanged: (_) => toggleAppTheme(),
+            ),
           ),
-          const SizedBox(height: 24),
-          const Align(
+
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9), minimumSize: const Size(double.infinity, 46), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            onPressed: () => shareRemedialMatrixApp(context),
+            icon: const Icon(Icons.share, color: Colors.white),
+            label: const Text("📤 ለጓደኞችህ አጋራ (Share App)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(height: 22),
+          Align(
             alignment: Alignment.centerLeft,
-            child: Text("📊 የጥናት ውጤት ትንታኔ (Performance Analytics)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.amber)),
+            child: Text("📊 የጥናት ውጤት ትንታኔ (Performance Analytics)", style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.bold, color: dark ? Colors.amber : const Color(0xFF5B4FE9))),
           ),
           const SizedBox(height: 10),
           if (subjectStats.isEmpty)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: const Color(0xFF181B28), borderRadius: BorderRadius.circular(14)),
-              child: const Text("ፈተናዎችን ሲሰሩ የእያንዳንዱ ትምህርት ውጤትዎ በፐርሰንት እዚህ ይታያል!", style: TextStyle(color: Colors.white60, fontSize: 13)),
+              decoration: BoxDecoration(color: cardBg(context), borderRadius: BorderRadius.circular(14), border: Border.all(color: borderCol(context))),
+              child: Text("ፈተናዎችን ሲሰሩ የእያንዳንዱ ትምህርት ውጤትዎ በፐርሰንት እዚህ ይታያል!", style: TextStyle(color: textSecondary(context), fontSize: 13)),
             )
           else
             ...subjectStats.entries.map((entry) {
@@ -2216,25 +2755,25 @@ class _ProfileContentState extends State<ProfileContent> {
               int total = st['total'] ?? 1;
               double ratio = (correct / total).clamp(0.0, 1.0);
               int pct = (ratio * 100).toInt();
-              Color barColor = pct >= 70 ? Colors.greenAccent : (pct >= 50 ? Colors.amber : Colors.redAccent);
+              Color barColor = pct >= 70 ? Colors.green : (pct >= 50 ? Colors.orange : Colors.redAccent);
               return Container(
                 margin: const EdgeInsets.only(bottom: 10),
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: const Color(0xFF181B28), borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(color: cardBg(context), borderRadius: BorderRadius.circular(12), border: Border.all(color: borderCol(context))),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(sub, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        Text(sub, style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold)),
                         Text("$pct% ($correct/$total)", style: TextStyle(color: barColor, fontWeight: FontWeight.bold)),
                       ],
                     ),
                     const SizedBox(height: 8),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(6),
-                      child: LinearProgressIndicator(value: ratio, minHeight: 8, backgroundColor: Colors.white12, valueColor: AlwaysStoppedAnimation<Color>(barColor)),
+                      child: LinearProgressIndicator(value: ratio, minHeight: 8, backgroundColor: surfaceBg(context), valueColor: AlwaysStoppedAnimation<Color>(barColor)),
                     ),
                   ],
                 ),
@@ -2288,20 +2827,20 @@ class _StudyTipsScreenState extends State<StudyTipsScreen> {
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : tips.isEmpty
-              ? const Center(child: Text("እስካሁን ምንም ጥቆማ አልተለቀቀም!"))
+              ? Center(child: Text("እስካሁን ምንም ጥቆማ አልተለቀቀም!", style: TextStyle(color: textSecondary(context))))
               : ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: tips.length,
                   itemBuilder: (c, i) => Card(
-                    color: const Color(0xFF181B28),
+                    color: cardBg(context),
                     margin: const EdgeInsets.only(bottom: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: borderCol(context))),
                     child: ListTile(
                       leading: const Icon(Icons.lightbulb, color: Colors.amber, size: 30),
-                      title: Text(tips[i]['title'] ?? '', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      title: Text(tips[i]['title'] ?? '', style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold)),
                       subtitle: Padding(
                         padding: const EdgeInsets.only(top: 6.0),
-                        child: Text(tips[i]['content'] ?? '', style: const TextStyle(color: Colors.white70, height: 1.4)),
+                        child: Text(tips[i]['content'] ?? '', style: TextStyle(color: textSecondary(context), height: 1.4)),
                       ),
                     ),
                   ),
@@ -2352,7 +2891,7 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : materials.isEmpty
-              ? const Center(child: Text("እስካሁን ምንም የናሙና ትምህርት አልተለቀቀም!"))
+              ? Center(child: Text("እስካሁን ምንም የናሙና ትምህርት አልተለቀቀም!", style: TextStyle(color: textSecondary(context))))
               : ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: materials.length,
@@ -2360,13 +2899,13 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
                     var m = materials[i];
                     bool isVideo = m['type'] == 'video';
                     return Card(
-                      color: const Color(0xFF181B28),
+                      color: cardBg(context),
                       margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: borderCol(context))),
                       child: ListTile(
-                        leading: Icon(isVideo ? Icons.play_circle_fill : Icons.picture_as_pdf, color: isVideo ? Colors.redAccent : Colors.lightBlueAccent, size: 40),
-                        title: Text(m['title'] ?? '', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        subtitle: const Text("ይክፈቱ (Tap to open)", style: TextStyle(color: Colors.white54)),
+                        leading: Icon(isVideo ? Icons.play_circle_fill : Icons.picture_as_pdf, color: isVideo ? Colors.redAccent : Colors.blueAccent, size: 40),
+                        title: Text(m['title'] ?? '', style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold)),
+                        subtitle: Text("ይክፈቱ (Tap to open)", style: TextStyle(color: textSecondary(context))),
                         trailing: const Icon(Icons.open_in_new, color: Colors.amber),
                         onTap: () => launchUrl(Uri.parse(m['url'] ?? ''), mode: LaunchMode.externalApplication),
                       ),
@@ -2378,7 +2917,7 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
 }
 
 // ============================================================================
-// 🛠 ADMIN DASHBOARD (LIVE STATS + BACKUP + LIVE QUESTIONS + EXAM COUNTDOWN)
+// 🛠 ADMIN DASHBOARD (LIVE STATS + VERSION TRACKING + BACKUP + LIVE QUESTIONS)
 // ============================================================================
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({Key? key}) : super(key: key);
@@ -2394,6 +2933,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int blockedCount = 0;
   int naturalCount = 0;
   int socialCount = 0;
+  int latestVersionCount = 0;
+  int olderVersionCount = 0;
   bool loadingStats = true;
 
   @override
@@ -2406,7 +2947,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     setState(() => loadingStats = true);
     try {
       final snap = await dbRef("students").get();
-      int total = 0, vip = 0, pending = 0, free = 0, blocked = 0, nat = 0, soc = 0;
+      int total = 0, vip = 0, pending = 0, free = 0, blocked = 0, nat = 0, soc = 0, vLatest = 0, vOld = 0;
       if (snap.exists && snap.value is Map) {
         (snap.value as Map).forEach((k, v) {
           if (v is Map) {
@@ -2420,6 +2961,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             String stream = (v['stream'] ?? '').toString().toLowerCase();
             if (stream.contains('social')) soc++;
             else nat++;
+
+            String ver = (v['app_version'] ?? '').toString().trim();
+            if (ver == APP_VERSION) vLatest++;
+            else vOld++;
           }
         });
       }
@@ -2432,6 +2977,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           blockedCount = blocked;
           naturalCount = nat;
           socialCount = soc;
+          latestVersionCount = vLatest;
+          olderVersionCount = vOld;
           loadingStats = false;
         });
       }
@@ -2448,7 +2995,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       (snap.value as Map).forEach((k, v) {
         if (v is Map) {
           Map copy = Map.from(v);
-          copy.remove('receipt'); // base64 images omitted for fast clean backup
+          copy.remove('receipt');
           cleanBackup[k.toString()] = copy;
         }
       });
@@ -2468,8 +3015,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2235),
-        title: const Text("⏳ የፈተና ቀን ቆጣሪ (Countdown)", style: TextStyle(color: Colors.white)),
+        backgroundColor: cardBg(context),
+        title: Text("⏳ የፈተና ቀን ቆጣሪ (Countdown)", style: TextStyle(color: textPrimary(context))),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -2498,20 +3045,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Widget _statBox(String label, String value, Color color) {
+  Widget _statBox(BuildContext context, String label, String value, Color color) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         decoration: BoxDecoration(
-          color: const Color(0xFF181B28),
+          color: cardBg(context),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: color.withOpacity(0.45)),
         ),
         child: Column(
           children: [
-            Text(value, style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.bold)),
+            Text(value, style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11.5), textAlign: TextAlign.center),
+            Text(label, style: TextStyle(color: textSecondary(context), fontSize: 11), textAlign: TextAlign.center),
           ],
         ),
       ),
@@ -2531,27 +3078,34 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // 📊 LIVE ADMIN STATISTICS
             if (loadingStats)
               const Padding(padding: EdgeInsets.all(16.0), child: CircularProgressIndicator(color: Colors.amber))
             else ...[
               Row(
                 children: [
-                  _statBox("ጠቅላላ ተማሪ", "$totalCount", Colors.cyanAccent),
+                  _statBox(context, "ጠቅላላ ተማሪ", "$totalCount", Colors.blue),
                   const SizedBox(width: 8),
-                  _statBox("👑 VIP", "$vipCount", Colors.amber),
+                  _statBox(context, "👑 VIP", "$vipCount", Colors.amber.shade700),
                   const SizedBox(width: 8),
-                  _statBox("⏳ Pending", "$pendingCount", Colors.orangeAccent),
+                  _statBox(context, "⏳ Pending", "$pendingCount", Colors.orange),
                 ],
               ),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  _statBox("🆓 Free", "$freeCount", Colors.lightBlueAccent),
+                  _statBox(context, "🆓 Free", "$freeCount", Colors.teal),
                   const SizedBox(width: 8),
-                  _statBox("🔬 Nat / 🌍 Soc", "$naturalCount / $socialCount", Colors.greenAccent),
+                  _statBox(context, "🔬 Nat / 🌍 Soc", "$naturalCount / $socialCount", Colors.green),
                   const SizedBox(width: 8),
-                  _statBox("🚫 Blocked", "$blockedCount", Colors.redAccent),
+                  _statBox(context, "🚫 Blocked", "$blockedCount", Colors.redAccent),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _statBox(context, "🚀 On v$APP_VERSION", "$latestVersionCount", const Color(0xFF5B4FE9)),
+                  const SizedBox(width: 8),
+                  _statBox(context, "📦 Older Versions", "$olderVersionCount", Colors.grey),
                 ],
               ),
             ],
@@ -2567,7 +3121,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.blueAccent, minimumSize: const Size(double.infinity, 50)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminStudentListScreen())).then((_) => _loadStats()),
               icon: const Icon(Icons.group, color: Colors.white),
-              label: const Text("👥 የተመዘገቡ ተማሪዎች (Search / Filter / VIP)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              label: const Text("👥 የተመዘገቡ ተማሪዎች (Version / Search / VIP)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 12),
             ElevatedButton.icon(
@@ -2599,7 +3153,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
             const SizedBox(height: 12),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.purpleAccent, minimumSize: const Size(double.infinity, 50)),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.purple, minimumSize: const Size(double.infinity, 50)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminUpdateAppScreen())),
               icon: const Icon(Icons.system_update, color: Colors.white),
               label: const Text("🚀 አዲስ Update (1xBet-Style) ልቀቅ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -2609,7 +3163,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.cyanAccent, side: const BorderSide(color: Colors.cyanAccent), padding: const EdgeInsets.symmetric(vertical: 14)),
+                    style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF5B4FE9), side: const BorderSide(color: Color(0xFF5B4FE9)), padding: const EdgeInsets.symmetric(vertical: 14)),
                     onPressed: _showExamCountdownDialog,
                     icon: const Icon(Icons.timer, size: 18),
                     label: const Text("Exam Countdown", style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold)),
@@ -2618,7 +3172,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.amber, side: const BorderSide(color: Colors.amber), padding: const EdgeInsets.symmetric(vertical: 14)),
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.amber.shade800, side: BorderSide(color: Colors.amber.shade800), padding: const EdgeInsets.symmetric(vertical: 14)),
                     onPressed: _exportBackup,
                     icon: const Icon(Icons.backup, size: 18),
                     label: const Text("Backup Students", style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold)),
@@ -2634,7 +3188,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 }
 
 // ============================================================================
-// ➕ LIVE QUESTION UPLOADER (APK ሳትሰራ በቀጥታ ጥያቄ መጨመሪያ)
+// ➕ LIVE QUESTION UPLOADER
 // ============================================================================
 class AdminAddQuestionScreen extends StatefulWidget {
   const AdminAddQuestionScreen({Key? key}) : super(key: key);
@@ -2644,7 +3198,7 @@ class AdminAddQuestionScreen extends StatefulWidget {
 
 class _AdminAddQuestionScreenState extends State<AdminAddQuestionScreen> {
   String examType = 'model_exams';
-  String year = '2018';
+  String year = '2019';
   String subject = 'Biology';
   int correctIndex = 0;
   bool isSaving = false;
@@ -2699,7 +3253,7 @@ class _AdminAddQuestionScreenState extends State<AdminAddQuestionScreen> {
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: examType,
-                    dropdownColor: const Color(0xFF1E2235),
+                    dropdownColor: cardBg(context),
                     decoration: const InputDecoration(labelText: "Type", border: OutlineInputBorder()),
                     items: const [
                       DropdownMenuItem(value: 'model_exams', child: Text("Model Exams")),
@@ -2712,10 +3266,10 @@ class _AdminAddQuestionScreenState extends State<AdminAddQuestionScreen> {
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: year,
-                    dropdownColor: const Color(0xFF1E2235),
+                    dropdownColor: cardBg(context),
                     decoration: const InputDecoration(labelText: "Year", border: OutlineInputBorder()),
                     items: ['2015', '2016', '2017', '2018', '2019'].map((y) => DropdownMenuItem(value: y, child: Text(y))).toList(),
-                    onChanged: (v) => setState(() => year = v ?? '2018'),
+                    onChanged: (v) => setState(() => year = v ?? '2019'),
                   ),
                 ),
               ],
@@ -2723,7 +3277,7 @@ class _AdminAddQuestionScreenState extends State<AdminAddQuestionScreen> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: subject,
-              dropdownColor: const Color(0xFF1E2235),
+              dropdownColor: cardBg(context),
               decoration: const InputDecoration(labelText: "Subject", border: OutlineInputBorder()),
               items: subjects.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
               onChanged: (v) => setState(() => subject = v ?? 'Biology'),
@@ -2741,7 +3295,7 @@ class _AdminAddQuestionScreenState extends State<AdminAddQuestionScreen> {
             const SizedBox(height: 12),
             DropdownButtonFormField<int>(
               value: correctIndex,
-              dropdownColor: const Color(0xFF1E2235),
+              dropdownColor: cardBg(context),
               decoration: const InputDecoration(labelText: "ትክክለኛው መልስ (Correct Option)", border: OutlineInputBorder()),
               items: const [
                 DropdownMenuItem(value: 0, child: Text("Option A")),
@@ -2831,14 +3385,14 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("1. የጥናት መስመር (Stream) እና ቀን ይምረጡ፦", style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+            Text("1. የጥናት መስመር (Stream) እና ቀን ይምረጡ፦", style: TextStyle(color: isDarkMode(context) ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: selectedStream,
-                    dropdownColor: const Color(0xFF1E2235),
+                    dropdownColor: cardBg(context),
                     decoration: const InputDecoration(labelText: "Stream", border: OutlineInputBorder()),
                     items: const [
                       DropdownMenuItem(value: "Natural", child: Text("Natural")),
@@ -2859,7 +3413,7 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: selectedDay,
-                    dropdownColor: const Color(0xFF1E2235),
+                    dropdownColor: cardBg(context),
                     decoration: const InputDecoration(labelText: "Day", border: OutlineInputBorder()),
                     items: days.map((d) => DropdownMenuItem(value: d, child: Text(d))).toList(),
                     onChanged: (val) {
@@ -2876,11 +3430,11 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
               ],
             ),
             const SizedBox(height: 18),
-            const Text("2. ከ2019 Course Outline ላይ ርዕስ ይምረጡ (Quick Select)፦", style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+            const Text("2. ከ2019 Course Outline ላይ ርዕስ ይምረጡ (Quick Select)፦", style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
               value: selectedSubjectForPicker,
-              dropdownColor: const Color(0xFF1E2235),
+              dropdownColor: cardBg(context),
               decoration: const InputDecoration(labelText: "ትምህርት ይምረጡ (Subject)", border: OutlineInputBorder()),
               items: subjectKeys.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
               onChanged: (val) {
@@ -2908,17 +3462,17 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
                       margin: const EdgeInsets.only(right: 10),
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF181B28),
+                        color: cardBg(context),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.cyanAccent.withOpacity(0.5)),
+                        border: Border.all(color: const Color(0xFF5B4FE9).withOpacity(0.5)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(uTitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 12.5)),
+                          Text(uTitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: isDarkMode(context) ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.bold, fontSize: 12.5)),
                           const SizedBox(height: 4),
-                          Expanded(child: Text(uTopics, maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 11))),
-                          const Text("👉 ይህን ለመምረጥ ይጫኑ", style: TextStyle(color: Colors.cyanAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                          Expanded(child: Text(uTopics, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: textSecondary(context), fontSize: 11))),
+                          const Text("👉 ይህን ለመምረጥ ይጫኑ", style: TextStyle(color: Colors.teal, fontSize: 10, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
@@ -2930,10 +3484,7 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
             TextField(
               controller: courseCtrl,
               maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: "የዕለቱ የሚጠናው ኮርስ ዝርዝር",
-                border: OutlineInputBorder(),
-              ),
+              decoration: const InputDecoration(labelText: "የዕለቱ የሚጠናው ኮርስ ዝርዝር", border: OutlineInputBorder()),
             ),
             const SizedBox(height: 20),
             ElevatedButton.icon(
@@ -3002,11 +3553,11 @@ class _AdminBroadcastScreenState extends State<AdminBroadcastScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("ማስታወቂያው ለማን ይድረስ?", style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 15)),
+            Text("ማስታወቂያው ለማን ይድረስ?", style: TextStyle(color: isDarkMode(context) ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.bold, fontSize: 15)),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
               value: targetAudience,
-              dropdownColor: const Color(0xFF1E2235),
+              dropdownColor: cardBg(context),
               decoration: const InputDecoration(border: OutlineInputBorder()),
               items: const [
                 DropdownMenuItem(value: 'all', child: Text("🌍 ለሁሉም ተማሪዎች (All Students)")),
@@ -3029,9 +3580,9 @@ class _AdminBroadcastScreenState extends State<AdminBroadcastScreen> {
               label: isSending ? const CircularProgressIndicator(color: Colors.white) : const Text("ማስታወቂያውን ላክ (Send Broadcast)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               "💡 አፑ ዝግ ሆኖ ከውጭ (Notification Bar) ለመላክ Firebase Console -> Messaging ውስጥ Topic ላይ 'all_students', 'vip_students' ወይም 'free_students' ብለህ ላክ!",
-              style: TextStyle(color: Colors.white60, fontSize: 12.5, height: 1.4),
+              style: TextStyle(color: textSecondary(context), fontSize: 12.5, height: 1.4),
             ),
           ],
         ),
@@ -3106,7 +3657,7 @@ class AdminContentScreen extends StatelessWidget {
             const SizedBox(height: 10),
             DropdownButton(
               value: mType,
-              dropdownColor: Colors.black,
+              dropdownColor: cardBg(context),
               items: const [DropdownMenuItem(value: 'video', child: Text("🎥 Video")), DropdownMenuItem(value: 'pdf', child: Text("📄 PDF / Note"))],
               onChanged: (val) => setStateDialog(() => mType = val.toString()),
             )
@@ -3136,18 +3687,18 @@ class AdminUpdateAppScreen extends StatelessWidget {
   const AdminUpdateAppScreen({Key? key}) : super(key: key);
   @override
   Widget build(BuildContext context) {
-    TextEditingController verCtrl = TextEditingController(text: "1.2.0");
+    TextEditingController verCtrl = TextEditingController(text: APP_VERSION);
     TextEditingController urlCtrl = TextEditingController(text: DEFAULT_DIRECT_APK_URL);
-    TextEditingController whatsNewCtrl = TextEditingController(text: "• ውጫዊ Notification እና የዕለቱ ጥናት ማሳሰቢያ\n• የጥያቄ Bookmark፣ Pomodoro Timer እና Analytics\n• 1xBet-Style ቀጥታ Update እና ቀላል Share App");
+    TextEditingController whatsNewCtrl = TextEditingController(text: "• አዲስ ውብ Dark & Light Mode ገጽታ\n• የ2019 ሙሉ Model Exam (7 ትምህርቶች - 427 ጥያቄዎች)\n• Daily Streak፣ Today's Challenge እና Achievements");
 
     return Scaffold(
       appBar: AppBar(title: const Text("🚀 1xBet-Style Update ልቀቅ")),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(children: [
-          const Text("ይህንን ስትጫን የድሮውን አፕ (V1.0.0 / V1.1.0) ለያዙም ሆነ ለአዲሱ V1.2.0 ተማሪዎች ወዲያውኑ የUpdate ማሳወቂያ ይደርሳቸዋል!", style: TextStyle(color: Colors.amber)),
+          Text("ይህንን ስትጫን የድሮውን አፕ (V1.2.0 እና ከዚያ በፊት) ለያዙ ተማሪዎች ወዲያውኑ ወደ V$APP_VERSION እንዲያድጉ ማሳወቂያ ይደርሳቸዋል!", style: TextStyle(color: isDarkMode(context) ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.w600)),
           const SizedBox(height: 20),
-          TextField(controller: verCtrl, decoration: const InputDecoration(labelText: "አዲሱ ቨርሽን (ምሳሌ: 1.2.0)", border: OutlineInputBorder())),
+          TextField(controller: verCtrl, decoration: const InputDecoration(labelText: "አዲሱ ቨርሽን (ምሳሌ: 1.3.0)", border: OutlineInputBorder())),
           const SizedBox(height: 15),
           TextField(controller: urlCtrl, decoration: const InputDecoration(labelText: "Direct APK Download URL (Remedial-Updates)", border: OutlineInputBorder())),
           const SizedBox(height: 15),
@@ -3176,7 +3727,7 @@ class AdminUpdateAppScreen extends StatelessWidget {
   }
 }
 
-// 👥 ADMIN STUDENT LIST WITH SEARCH BAR + FILTER
+// 👥 ADMIN STUDENT LIST WITH SEARCH BAR + FILTER + VERSION BADGE
 class AdminStudentListScreen extends StatefulWidget {
   const AdminStudentListScreen({Key? key}) : super(key: key);
   @override
@@ -3221,8 +3772,13 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
 
   void _applyFilter() {
     displayedStudents = allStudents.where((s) {
-      bool statusOk = currentFilter == 'All' || s['status'].toString().toLowerCase() == currentFilter.toLowerCase();
-      if (!statusOk) return false;
+      bool filterOk = true;
+      if (currentFilter == 'v$APP_VERSION') {
+        filterOk = (s['app_version'] ?? '').toString().trim() == APP_VERSION;
+      } else if (currentFilter != 'All') {
+        filterOk = s['status'].toString().toLowerCase() == currentFilter.toLowerCase();
+      }
+      if (!filterOk) return false;
       if (searchQuery.isEmpty) return true;
       String name = (s['full_name'] ?? '').toString().toLowerCase();
       String id = (s['short_id'] ?? '').toString().toLowerCase();
@@ -3250,7 +3806,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
               _applyFilter();
             });
           },
-          itemBuilder: (context) => ['All', 'VIP', 'Pending', 'Free', 'Blocked'].map((e) => PopupMenuItem(value: e, child: Text(e))).toList(),
+          itemBuilder: (context) => ['All', 'v$APP_VERSION', 'VIP', 'Pending', 'Free', 'Blocked'].map((e) => PopupMenuItem(value: e, child: Text(e))).toList(),
         )
       ]),
       body: Column(
@@ -3266,10 +3822,10 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
               },
               decoration: InputDecoration(
                 hintText: "በስም ወይም በID ፈልግ (Search)...",
-                prefixIcon: const Icon(Icons.search, color: Colors.amber),
+                prefixIcon: const Icon(Icons.search, color: Color(0xFF5B4FE9)),
                 filled: true,
-                fillColor: const Color(0xFF181B28),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                fillColor: cardBg(context),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: borderCol(context))),
               ),
             ),
           ),
@@ -3285,13 +3841,28 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
                           var s = displayedStudents[i];
                           bool isVip = s['status'] == 'vip';
                           bool isBlocked = s['status'] == 'blocked';
+                          String ver = (s['app_version'] ?? 'Old').toString();
                           return Card(
-                            color: const Color(0xFF181B28),
+                            color: cardBg(context),
                             margin: const EdgeInsets.only(bottom: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: borderCol(context))),
                             child: ListTile(
                               leading: CircleAvatar(backgroundColor: isBlocked ? Colors.red : (isVip ? Colors.amber : Colors.blueGrey), child: Icon(isBlocked ? Icons.block : Icons.person, color: Colors.black)),
-                              title: Text(s['full_name'] ?? 'Unknown', style: TextStyle(color: isBlocked ? Colors.redAccent : Colors.white, fontWeight: FontWeight.bold)),
-                              subtitle: Text("ID: ${s['short_id']} | Code: ${(s['short_id'] ?? 0) * 3}\nStream: ${s['stream'] ?? '-'} | Status: ${s['status']}", style: const TextStyle(color: Colors.white70)),
+                              title: Row(
+                                children: [
+                                  Flexible(child: Text(s['full_name'] ?? 'Unknown', overflow: TextOverflow.ellipsis, style: TextStyle(color: isBlocked ? Colors.redAccent : textPrimary(context), fontWeight: FontWeight.bold))),
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: ver == APP_VERSION ? Colors.green.withOpacity(0.18) : Colors.grey.withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text("v$ver", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: ver == APP_VERSION ? Colors.green : textSecondary(context))),
+                                  ),
+                                ],
+                              ),
+                              subtitle: Text("ID: ${s['short_id']} | Code: ${(s['short_id'] ?? 0) * 3}\nStream: ${s['stream'] ?? '-'} | Status: ${s['status']}", style: TextStyle(color: textSecondary(context), fontSize: 12)),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -3370,11 +3941,11 @@ class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
                     int id = s['short_id'] ?? 0;
                     return Card(
                       margin: const EdgeInsets.all(10),
-                      color: const Color(0xFF181B28),
+                      color: cardBg(context),
                       child: Padding(
                         padding: const EdgeInsets.all(12.0),
                         child: Column(children: [
-                          Text("👤 ስም: ${s['full_name']}", style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                          Text("👤 ስም: ${s['full_name']}", style: TextStyle(color: textPrimary(context), fontSize: 16, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 6),
                           Text("🆔 ID: $id   |   🔑 VIP Code: ${id * 3}", style: const TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 12),
@@ -3446,12 +4017,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                   itemBuilder: (c, i) {
                     var user = topUsers[i];
                     return Card(
-                      color: const Color(0xFF181B28),
+                      color: cardBg(context),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: borderCol(context))),
                       child: ListTile(
                         leading: CircleAvatar(backgroundColor: i == 0 ? Colors.amber : i == 1 ? Colors.grey.shade400 : Colors.brown.shade300, child: Text("${i + 1}", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
-                        title: Text(user['name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.white)),
-                        subtitle: Text("${user['subject']} • ${user['method']}", style: const TextStyle(color: Colors.greenAccent)),
-                        trailing: Text("${user['score']} Pts", style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.amber)),
+                        title: Text(user['name'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textPrimary(context))),
+                        subtitle: Text("${user['subject']} • ${user['method']}", style: TextStyle(color: isDarkMode(context) ? Colors.greenAccent : Colors.green.shade700, fontSize: 12.5)),
+                        trailing: Text("${user['score']} Pts", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: isDarkMode(context) ? Colors.amber : const Color(0xFF5B4FE9))),
                       ),
                     );
                   },
@@ -3461,7 +4033,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
 }
 
 // ============================================================================
-// 📝 QUIZ SCREEN (WITH BOOKMARKS + ANALYTICS + LIVE FIREBASE QUESTIONS)
+// 📝 QUIZ SCREEN (LOADS questions.json + 2019 MODEL EXAMS + LIVE QUESTIONS)
 // ============================================================================
 class QuizScreen extends StatefulWidget {
   final String examType;
@@ -3508,25 +4080,42 @@ class _QuizScreenState extends State<QuizScreen> {
     });
   }
 
+  void _extractFromParsed(dynamic parsed, String targetType, String targetYear, List targetList) {
+    if (parsed is Map && parsed[targetType] != null && parsed[targetType][targetYear] != null) {
+      var yearData = parsed[targetType][targetYear];
+      if (yearData is Map) {
+        if (yearData[widget.subject] != null) {
+          targetList.addAll(List.from(yearData[widget.subject]));
+        } else if (widget.subject == "Maths" && yearData["Mathematics"] != null) {
+          targetList.addAll(List.from(yearData["Mathematics"]));
+        } else if (widget.subject == "Mathematics" && yearData["Maths"] != null) {
+          targetList.addAll(List.from(yearData["Maths"]));
+        }
+      }
+    }
+  }
+
   Future loadQuestions() async {
     try {
       String targetType = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? 'model_exams' : widget.examType;
-      String targetYear = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? '2018' : widget.year;
+      String targetYear = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? widget.year : widget.year;
       List rawList = [];
 
-      // 1. Local assets/questions.json
+      // 1. Load from assets/questions.json
       try {
         final jsonString = await rootBundle.loadString('assets/questions.json');
         final parsed = jsonDecode(jsonString);
-        if (parsed is Map && parsed[targetType] != null && parsed[targetType][targetYear] != null) {
-          var yearData = parsed[targetType][targetYear];
-          if (yearData[widget.subject] != null) rawList.addAll(List.from(yearData[widget.subject]));
-          else if (widget.subject == "Maths" && yearData["Mathematics"] != null) rawList.addAll(List.from(yearData["Mathematics"]));
-          else if (widget.subject == "Mathematics" && yearData["Maths"] != null) rawList.addAll(List.from(yearData["Maths"]));
-        }
+        _extractFromParsed(parsed, targetType, targetYear, rawList);
       } catch (_) {}
 
-      // 2. Merge Live Questions uploaded from Admin Dashboard
+      // 2. Load from assets/remedial_2019_model_exams.json (427 New 2019 Model Exam Questions)
+      try {
+        final json2019 = await rootBundle.loadString('assets/remedial_2019_model_exams.json');
+        final parsed2019 = jsonDecode(json2019);
+        _extractFromParsed(parsed2019, targetType, targetYear, rawList);
+      } catch (_) {}
+
+      // 3. Merge Live Questions uploaded from Admin Dashboard
       try {
         String liveSub = widget.subject == "Maths" ? "Mathematics" : widget.subject;
         final snap = await dbRef("live_questions/$targetType/$targetYear/$liveSub").get().timeout(const Duration(seconds: 3));
@@ -3607,14 +4196,14 @@ class _QuizScreenState extends State<QuizScreen> {
         selectedOptionIndex = null;
       } else {
         _timer?.cancel();
-        _saveAnalytics();
+        _saveAnalyticsAndProgress();
         _submitScoreToLeaderboard();
         showCompletionDialog(isTimeUp: false);
       }
     });
   }
 
-  Future _saveAnalytics() async {
+  Future _saveAnalyticsAndProgress() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String raw = prefs.getString('subject_analytics') ?? '{}';
@@ -3625,6 +4214,13 @@ class _QuizScreenState extends State<QuizScreen> {
       prev["total"] = (prev["total"] ?? 0) + questions.length;
       stats[sub] = prev;
       await prefs.setString('subject_analytics', jsonEncode(stats));
+
+      double pct = questions.isEmpty ? 0 : (score / questions.length);
+      await StudyProgress.recordActivity(
+        topicsDelta: 1,
+        pointsDelta: (score * 5) + 20,
+        highScore: pct >= 0.7,
+      );
     } catch (_) {}
   }
 
@@ -3645,17 +4241,19 @@ class _QuizScreenState extends State<QuizScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2235),
-        title: Text(isTimeUp ? "⏰ ሰዓት አልቋል!" : "🎉 Quiz Completed!", style: const TextStyle(color: Colors.white), textAlign: TextAlign.center),
+        backgroundColor: cardBg(context),
+        title: Text(isTimeUp ? "⏰ ሰዓት አልቋል!" : "🎉 Quiz Completed!", style: TextStyle(color: textPrimary(context)), textAlign: TextAlign.center),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Stack(alignment: Alignment.center, children: [
-              SizedBox(height: 100, width: 100, child: CircularProgressIndicator(value: percentage, color: percentage >= 0.5 ? Colors.green : Colors.red, backgroundColor: Colors.grey.shade800, strokeWidth: 10)),
-              Text("${(percentage * 100).toInt()}%", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+              SizedBox(height: 100, width: 100, child: CircularProgressIndicator(value: percentage, color: percentage >= 0.5 ? Colors.green : Colors.red, backgroundColor: surfaceBg(context), strokeWidth: 10)),
+              Text("${(percentage * 100).toInt()}%", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: textPrimary(context))),
             ]),
             const SizedBox(height: 15),
-            Text("ውጤትዎ: $score ከ ${questions.length}", style: const TextStyle(fontSize: 18, color: Colors.amber)),
+            Text("ውጤትዎ: $score ከ ${questions.length}", style: const TextStyle(fontSize: 18, color: Colors.amber, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Text("💎 +${(score * 5) + 20} Points earned!", style: const TextStyle(fontSize: 13.5, color: Colors.green, fontWeight: FontWeight.bold)),
           ],
         ),
         actions: [
@@ -3667,7 +4265,7 @@ class _QuizScreenState extends State<QuizScreen> {
             child: const Text("ወደ ዋናው (Back)"),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9)),
             onPressed: () {
               Navigator.pop(context);
               Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => QuizReviewScreen(questions: questions, userAnswers: userAnswers, subject: widget.subject)));
@@ -3690,6 +4288,7 @@ class _QuizScreenState extends State<QuizScreen> {
 
   @override
   Widget build(BuildContext context) {
+    bool dark = isDarkMode(context);
     if (isLoading) return Scaffold(appBar: AppBar(title: Text(widget.subject)), body: const Center(child: CircularProgressIndicator()));
     if (hasError || questions.isEmpty) return Scaffold(appBar: AppBar(title: Text(widget.subject)), body: const Center(child: Text("ጥያቄዎች አልተገኙም!")));
 
@@ -3701,10 +4300,10 @@ class _QuizScreenState extends State<QuizScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.subject, style: const TextStyle(fontSize: 16)),
+        title: Text("${widget.subject} (${widget.year})", style: const TextStyle(fontSize: 16)),
         actions: [
           IconButton(icon: const Icon(Icons.star_border_rounded, color: Colors.amber), tooltip: "Bookmark Question", onPressed: _bookmarkCurrentQuestion),
-          Center(child: Padding(padding: const EdgeInsets.only(right: 14), child: Text("⏱ $timeStr", style: const TextStyle(fontSize: 15, color: Colors.amberAccent)))),
+          Center(child: Padding(padding: const EdgeInsets.only(right: 14), child: Text("⏱ $timeStr", style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, color: dark ? Colors.amberAccent : const Color(0xFF5B4FE9))))),
         ],
       ),
       body: SingleChildScrollView(
@@ -3712,31 +4311,66 @@ class _QuizScreenState extends State<QuizScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("Q: ${currentQuestionIndex + 1}/${questions.length}", style: const TextStyle(color: Colors.white70)), Text("Score: $score", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.greenAccent))]),
-            const SizedBox(height: 15),
-            Text(currentQ['question']?.toString() ?? "", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 20),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("Q: ${currentQuestionIndex + 1}/${questions.length}", style: TextStyle(color: textSecondary(context), fontWeight: FontWeight.bold)), Text("Score: $score", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green))]),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: (currentQuestionIndex + 1) / questions.length,
+                minHeight: 6,
+                backgroundColor: surfaceBg(context),
+                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF5B4FE9)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: cardBg(context), borderRadius: BorderRadius.circular(14), border: Border.all(color: borderCol(context))),
+              child: Text(currentQ['question']?.toString() ?? "", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: textPrimary(context), height: 1.4)),
+            ),
+            const SizedBox(height: 16),
             ...List.generate(options.length, (i) {
-              Color bCol = const Color(0xFF1E2235);
+              Color bCol = cardBg(context);
+              Color txtCol = textPrimary(context);
               if (showExplanation) {
                 int correctId = int.tryParse(currentQ['correct_option_id']?.toString() ?? '0') ?? 0;
-                if (i == correctId) bCol = Colors.green.shade700;
-                else if (i == selectedOptionIndex) bCol = Colors.red.shade700;
+                if (i == correctId) {
+                  bCol = Colors.green.shade600;
+                  txtCol = Colors.white;
+                } else if (i == selectedOptionIndex) {
+                  bCol = Colors.red.shade600;
+                  txtCol = Colors.white;
+                }
               }
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: bCol, padding: const EdgeInsets.all(16), alignment: Alignment.centerLeft, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: bCol,
+                    elevation: dark ? 0 : 1,
+                    side: BorderSide(color: borderCol(context)),
+                    padding: const EdgeInsets.all(16),
+                    alignment: Alignment.centerLeft,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
                   onPressed: () => checkAnswer(i),
-                  child: Text("${String.fromCharCode(65 + i)}. ${options[i]}", style: const TextStyle(color: Colors.white)),
+                  child: Text("${String.fromCharCode(65 + i)}. ${options[i]}", style: TextStyle(color: txtCol, fontSize: 15)),
                 ),
               );
             }),
             if (showExplanation) ...[
               const SizedBox(height: 10),
-              Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.black38, borderRadius: BorderRadius.circular(10)), child: Text("💡 ${currentQ['explanation']?.toString() ?? 'ማብራሪያ የለውም።'}", style: const TextStyle(color: Colors.amber, fontSize: 15))),
-              const SizedBox(height: 20),
-              ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: nextQuestion, child: const Text("Next Question ➡️", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)))
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(color: dark ? Colors.black38 : const Color(0xFFFFF8E1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.amber.withOpacity(0.5))),
+                child: Text("💡 ${currentQ['explanation']?.toString() ?? 'ማብራሪያ የለውም።'}", style: TextStyle(color: dark ? Colors.amber : Colors.orange.shade900, fontSize: 14.5, height: 1.4)),
+              ),
+              const SizedBox(height: 18),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9), padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                onPressed: nextQuestion,
+                child: const Text("Next Question ➡️", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+              )
             ],
           ],
         ),
@@ -3774,23 +4408,24 @@ class QuizReviewScreen extends StatelessWidget {
           int? userId = userAnswers[index];
           bool isCorrect = correctId == userId;
           return Card(
-            color: const Color(0xFF181B28),
-            margin: const EdgeInsets.only(bottom: 15),
+            color: cardBg(context),
+            margin: const EdgeInsets.only(bottom: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: borderCol(context))),
             child: Padding(
-              padding: const EdgeInsets.all(12.0),
+              padding: const EdgeInsets.all(14.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(children: [
                     Icon(isCorrect ? Icons.check_circle : (userId == null ? Icons.help : Icons.cancel), color: isCorrect ? Colors.green : (userId == null ? Colors.grey : Colors.red)),
                     const SizedBox(width: 8),
-                    Expanded(child: Text("Q${index + 1}: ${q['question']}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+                    Expanded(child: Text("Q${index + 1}: ${q['question']}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15.5, color: textPrimary(context)))),
                   ]),
-                  const Divider(color: Colors.white24),
-                  Text("✅ ትክክለኛው መልስ: ${opts.length > correctId ? opts[correctId] : 'Unknown'}", style: const TextStyle(color: Colors.greenAccent)),
+                  Divider(color: borderCol(context)),
+                  Text("✅ ትክክለኛው መልስ: ${opts.length > correctId ? opts[correctId] : 'Unknown'}", style: TextStyle(color: isDarkMode(context) ? Colors.greenAccent : Colors.green.shade700, fontWeight: FontWeight.w600)),
                   if (!isCorrect) Text("❌ የእርስዎ መልስ: ${userId != null && opts.length > userId ? opts[userId] : 'አልተመለሰም'}", style: const TextStyle(color: Colors.redAccent)),
                   const SizedBox(height: 8),
-                  Text("💡 ማብራሪያ: ${q['explanation'] ?? 'የለውም'}", style: const TextStyle(color: Colors.amber, fontSize: 13)),
+                  Text("💡 ማብራሪያ: ${q['explanation'] ?? 'የለውም'}", style: TextStyle(color: isDarkMode(context) ? Colors.amber : Colors.orange.shade900, fontSize: 13)),
                 ],
               ),
             ),
@@ -3807,18 +4442,37 @@ class YearSelectionScreen extends StatelessWidget {
   const YearSelectionScreen({Key? key, required this.examType, required this.title}) : super(key: key);
   @override
   Widget build(BuildContext context) {
-    List<String> years = examType == 'model_exams' ? ['2017', '2018', '2019'] : ['2015', '2016', '2017', '2018', '2019'];
+    List<String> years = examType == 'model_exams' ? ['2019', '2018', '2017'] : ['2018', '2017', '2016', '2015'];
     return Scaffold(
       appBar: AppBar(title: Text(title)),
       body: GridView.builder(
         padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 2.0),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.9),
         itemCount: years.length,
-        itemBuilder: (c, i) => ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo.shade600, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SubjectSelectionScreen(examType: examType, year: years[i], title: "$title - ${years[i]}"))),
-          child: Text("🗓 ${years[i]}", style: const TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold)),
-        ),
+        itemBuilder: (c, i) {
+          bool isNew = years[i] == '2019';
+          return ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isNew ? const Color(0xFF5B4FE9) : Colors.indigo.shade600,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            ),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SubjectSelectionScreen(examType: examType, year: years[i], title: "$title - ${years[i]}"))),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text("🗓 ${years[i]}", style: const TextStyle(fontSize: 19, color: Colors.white, fontWeight: FontWeight.bold)),
+                if (isNew) ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(8)),
+                    child: const Text("NEW • 427 Qs", style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold)),
+                  )
+                ]
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -3831,13 +4485,13 @@ class SubjectSelectionScreen extends StatelessWidget {
   const SubjectSelectionScreen({Key? key, required this.examType, required this.year, required this.title}) : super(key: key);
   @override
   Widget build(BuildContext context) {
-    final subs = ["Biology", "Chemistry", "Physics", "Maths", "Mathematics", "English", "History", "Geography"];
-    final colors = [Colors.green, Colors.orange, Colors.blue, Colors.red, Colors.amber.shade700, Colors.purple, Colors.brown, Colors.teal];
+    final subs = ["Biology", "Chemistry", "Physics", "Mathematics", "English", "History", "Geography"];
+    final colors = [Colors.green, Colors.orange, Colors.blue, Colors.redAccent, Colors.purple, Colors.brown, Colors.teal];
     return Scaffold(
       appBar: AppBar(title: Text(title)),
       body: GridView.builder(
         padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 2.4),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 2.2),
         itemCount: subs.length,
         itemBuilder: (c, i) => ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: colors[i % colors.length], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
@@ -3848,3 +4502,4 @@ class SubjectSelectionScreen extends StatelessWidget {
     );
   }
 }
+
