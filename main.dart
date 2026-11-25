@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
@@ -17,18 +18,28 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
-const String APP_VERSION = "1.3.0";
+const String APP_VERSION = "1.4.0";
 const int OWNER_ADMIN_ID = 5053;
 
-// የ Public ሪፖዚቶሪ (Remedial-Updates) ቋሚ ሊንኮች
-const String DEFAULT_DIRECT_APK_URL = "https://github.com/mubarekmustefa60-collab/Remedial-Updates/releases/latest/download/Remedial_Matrix_Universal.apk";
-const String REMOTE_FIREBASE_CONFIG_URL = "https://raw.githubusercontent.com/mubarekmustefa60-collab/Remedial-Updates/main/firebase_config.json";
+const String DEFAULT_DIRECT_APK_URL =
+    "https://github.com/mubarekmustefa60-collab/Remedial-Updates/releases/latest/download/Remedial_Matrix_Universal.apk";
+const String REMOTE_FIREBASE_CONFIG_URL =
+    "https://raw.githubusercontent.com/mubarekmustefa60-collab/Remedial-Updates/main/firebase_config.json";
 const String TELEGRAM_CHANNEL_URL = "https://t.me/REMEDIAL_MATRIX";
+
+const List<String> ALL_COURSES = [
+  "Mathematics",
+  "Physics",
+  "Chemistry",
+  "Biology",
+  "English",
+  "History",
+  "Geography",
+];
 
 const MethodChannel _securityChannel = MethodChannel("com.remedial.matrix/security");
 final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
 
-// 🌗 Global Dark / Light Mode Notifier
 final ValueNotifier<ThemeMode> appThemeMode = ValueNotifier<ThemeMode>(ThemeMode.light);
 
 bool isDarkMode(BuildContext context) => Theme.of(context).brightness == Brightness.dark;
@@ -45,7 +56,6 @@ Future<void> toggleAppTheme() async {
   await prefs.setBool('is_dark_mode', nowDark);
 }
 
-// Dynamic Firebase Database Reference
 FirebaseDatabase? _activeDatabase;
 
 DatabaseReference dbRef(String path) {
@@ -213,7 +223,7 @@ Future<void> _setupPushNotifications(bool isVip) async {
 }
 
 // ============================================================================
-// 🎮 GAMIFICATION & STUDY PROGRESS TRACKER (STREAK, POINTS, DAILY GOAL, BADGES)
+// 🎮 GAMIFICATION & STUDY PROGRESS TRACKER
 // ============================================================================
 class StudyProgress {
   static String _todayKey() {
@@ -271,7 +281,7 @@ class StudyProgress {
     }
   }
 
-  static Future<Map<String, dynamic>> loadStats() async {
+  static Future> loadStats() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String today = _todayKey();
     int streak = prefs.getInt('study_streak') ?? 1;
@@ -369,23 +379,20 @@ class RemedialApp extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// 📤 SHARE APP HELPER
-// ============================================================================
 void shareRemedialMatrixApp(BuildContext context) {
   const String shareText =
-      "🎓 Remedial Matrix (V1.3.0 - 2019 Special App)!\n\n"
+      "🎓 Remedial Matrix (V$APP_VERSION - 2019 Special App)!\n\n"
       "✅ የ2019 ሙሉ የትምህርት ሚኒስቴር Course Outline\n"
       "✅ አዲሱ የ2019 Model Exam (7 ትምህርቶች - 427 ጥያቄዎች ከነማብራሪያቸው)\n"
-      "✅ የ2015-2018 የሪሚዲያል እና የሞዴል ፈተናዎች\n"
-      "✅ Dark & Light Mode + ዕለታዊ Streak እና Achievements\n\n"
+      "✅ Short Notes & PDFs በየCourse እና በየChapter\n"
+      "✅ Flashcards፣ Timed Mock Exam & Daily Streak\n\n"
       "📥 አፑን በቀጥታ ለማውረድ (Direct Download)፦\n$DEFAULT_DIRECT_APK_URL\n\n"
       "📢 የቴሌግራም ቻናላችን፦ $TELEGRAM_CHANNEL_URL";
   Share.share(shareText, subject: 'Remedial Matrix App');
 }
 
 // ============================================================================
-// 🚀 1XBET-STYLE IN-APP SELF-UPDATER SCREEN
+// 🚀 1XBET-STYLE IN-APP SELF-UPDATER (SHOWS CURRENT & LATEST VERSION)
 // ============================================================================
 class InAppUpdateScreen extends StatefulWidget {
   final String latestVersion;
@@ -419,7 +426,7 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
       isDownloading = true;
       hasError = false;
       progress = 0.0;
-      statusMessage = "Downloading update...";
+      statusMessage = "Downloading v${widget.latestVersion}...";
     });
 
     try {
@@ -471,11 +478,13 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
         backgroundColor: const Color(0xFF181B28),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text("✨ What's new in v${widget.latestVersion}?", style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
-        content: Text(
-          widget.whatsNew.isNotEmpty
-              ? widget.whatsNew
-              : "• አዲስ ውብ Dark & Light Mode ገጽታ\n• የ2019 ሙሉ Model Exam (427 ጥያቄዎች)\n• Daily Streak፣ Today's Challenge እና Achievements",
-          style: const TextStyle(color: Colors.white, fontSize: 14.5, height: 1.5),
+        content: SingleChildScrollView(
+          child: Text(
+            widget.whatsNew.isNotEmpty
+                ? widget.whatsNew
+                : "• Short Notes & PDFs በየCourse እና በየChapter\n• Flashcards & Quick Actions ከላይ\n• ፈጣን የAdmin ደረሰኝ Refresh እና Scroll Fix",
+            style: const TextStyle(color: Colors.white, fontSize: 14.5, height: 1.5),
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close", style: TextStyle(color: Colors.amber))),
@@ -496,41 +505,73 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Align(
-                alignment: Alignment.topRight,
-                child: IconButton(
-                  icon: const CircleAvatar(
-                    backgroundColor: Colors.white12,
-                    child: Icon(Icons.close, color: Colors.white70, size: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white10,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: Text(
+                      "Current: v$APP_VERSION",
+                      style: const TextStyle(color: Colors.white70, fontSize: 12.5, fontWeight: FontWeight.w600),
+                    ),
                   ),
-                  onPressed: () => Navigator.pop(context),
-                ),
+                  IconButton(
+                    icon: const CircleAvatar(
+                      backgroundColor: Colors.white12,
+                      child: Icon(Icons.close, color: Colors.white70, size: 20),
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
               ),
               Column(
                 children: [
                   Container(
-                    height: 180,
-                    width: 180,
+                    height: 170,
+                    width: 170,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: const RadialGradient(colors: [Color(0xFF1E56A0), Color(0xFF061126)], radius: 0.8),
                       boxShadow: [BoxShadow(color: Colors.blueAccent.withOpacity(0.35), blurRadius: 40, spreadRadius: 10)],
                     ),
-                    child: const Icon(Icons.rocket_launch_rounded, size: 95, color: Colors.amber),
+                    child: const Icon(Icons.rocket_launch_rounded, size: 90, color: Colors.amber),
                   ),
-                  const SizedBox(height: 25),
+                  const SizedBox(height: 22),
                   const Text("REMEDIAL MATRIX", style: TextStyle(color: Colors.amber, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                  const SizedBox(height: 8),
-                  Text("Version ${widget.latestVersion}", style: const TextStyle(color: Colors.cyanAccent, fontSize: 14, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text("v$APP_VERSION", style: const TextStyle(color: Colors.white60, fontSize: 14, fontWeight: FontWeight.w600)),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: Icon(Icons.arrow_forward_rounded, color: Colors.amber, size: 18),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.cyanAccent.withOpacity(0.16),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.cyanAccent.withOpacity(0.5)),
+                        ),
+                        child: Text("New v${widget.latestVersion}", style: const TextStyle(color: Colors.cyanAccent, fontSize: 14, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
                 ],
               ),
               if (!isDownloading)
                 Column(
                   children: [
-                    const Text(
-                      "A new version of the app is available, press \"Update\" to install",
+                    Text(
+                      "You are on v$APP_VERSION. A new version (v${widget.latestVersion}) is ready — press \"Update\" to install",
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white, fontSize: 16, height: 1.4),
+                      style: const TextStyle(color: Colors.white, fontSize: 15.5, height: 1.4),
                     ),
                     if (hasError) ...[
                       const SizedBox(height: 12),
@@ -541,7 +582,7 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
                         label: const Text("በብራውዘር / ቴሌግራም አውርድ", style: TextStyle(color: Colors.amber)),
                       ),
                     ],
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 22),
                     SizedBox(
                       width: double.infinity,
                       height: 50,
@@ -564,7 +605,7 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                         onPressed: _startInAppUpdate,
-                        child: const Text("Update", style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+                        child: Text("Update to v${widget.latestVersion}", style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -762,7 +803,6 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
       String deviceId = prefs.getString('device_id') ?? '';
 
       if (localRegistered && deviceId.isNotEmpty) {
-        // 📊 Tag current app version to Firebase for live Version Tracking
         try {
           dbRef("students/$deviceId").update({
             "app_version": APP_VERSION,
@@ -1114,7 +1154,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       final snapshot = await dbRef("admin_settings/update").get();
       if (snapshot.exists) {
         Map data = snapshot.value as Map;
-        String latestVersion = (data['version'] ?? APP_VERSION).toString();
+        String latestVersion = (data['version'] ?? APP_VERSION).toString().trim();
         String updateUrl = (data['url'] ?? DEFAULT_DIRECT_APK_URL).toString();
         String whatsNew = (data['whats_new'] ?? '').toString();
 
@@ -1133,6 +1173,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (e) {}
   }
 
+  // ✅ Scrollable Broadcast Dialog (No text clipping even for long messages)
   Future _checkTargetedBroadcast() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -1147,7 +1188,9 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           int newTime = data['time'] ?? 0;
 
           if (newTime > lastTime && mounted) {
-            String badge = target == 'vip' ? "👑 የVIP ተማሪዎች ልዩ ማስታወቂያ" : (target == 'free' ? "📢 ለነጻ ተማሪዎች የተላከ ማስታወቂያ" : "📢 አጠቃላይ ማስታወቂያ");
+            String badge = target == 'vip'
+                ? "👑 የVIP ተማሪዎች ልዩ ማስታወቂያ"
+                : (target == 'free' ? "📢 ለነጻ ተማሪዎች የተላከ ማስታወቂያ" : "📢 አጠቃላይ ማስታወቂያ");
             await showDialog(
               context: context,
               builder: (context) => AlertDialog(
@@ -1161,7 +1204,15 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                     Text(data['title'] ?? "ማስታወቂያ", style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 18)),
                   ],
                 ),
-                content: Text(data['message'] ?? "", style: TextStyle(color: textSecondary(context), fontSize: 15, height: 1.5)),
+                content: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.55),
+                  child: SingleChildScrollView(
+                    child: Text(
+                      data['message'] ?? "",
+                      style: TextStyle(color: textSecondary(context), fontSize: 15, height: 1.5),
+                    ),
+                  ),
+                ),
                 actions: [
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9)),
@@ -1205,21 +1256,23 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                 Expanded(child: Text("📅 የዛሬው የጥናት ፕሮግራም (2019 Syllabus)", style: TextStyle(color: textPrimary(context), fontSize: 15.5, fontWeight: FontWeight.bold))),
               ],
             ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("ዕለት፦ ${getAmharicDay(dayName)}", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 10),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: surfaceBg(context), borderRadius: BorderRadius.circular(10)),
-                  child: Text(todayCourse, style: TextStyle(color: textPrimary(context), fontSize: 14, fontWeight: FontWeight.w600, height: 1.4)),
-                ),
-                const SizedBox(height: 12),
-                Text("ዛሬ ይህንን የ2019 ሪሚዲያል ኮርስ ርዕስ አንብበዋል? ካላነበቡ አሁኑኑ ጥናትዎን ይጀምሩ!", style: TextStyle(color: textSecondary(context), fontSize: 13)),
-              ],
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("ዕለት፦ ${getAmharicDay(dayName)}", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: surfaceBg(context), borderRadius: BorderRadius.circular(10)),
+                    child: Text(todayCourse, style: TextStyle(color: textPrimary(context), fontSize: 14, fontWeight: FontWeight.w600, height: 1.4)),
+                  ),
+                  const SizedBox(height: 12),
+                  Text("ዛሬ ይህንን የ2019 ሪሚዲያል ኮርስ ርዕስ አንብበዋል? ካላነበቡ አሁኑኑ ጥናትዎን ይጀምሩ!", style: TextStyle(color: textSecondary(context), fontSize: 13)),
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -1272,7 +1325,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (e) {}
     _refreshProgressStats();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("✅ ስቴተስ: ${appStatus.toUpperCase()}"), backgroundColor: Colors.green));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("✅ ስቴተስ: ${appStatus.toUpperCase()} (v$APP_VERSION)"), backgroundColor: Colors.green));
     }
   }
 
@@ -1373,7 +1426,8 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
 }
 
 // ============================================================================
-// 🏠 MODERN GAMIFIED HOME SCREEN (DARK & LIGHT MODE)
+// 🏠 HOME SCREEN (QUICK ACTIONS ABOVE LEADERBOARD, HIGHLIGHTED VIP VIDEO CLASS,
+//    SHORT NOTES & PDFS, FLASHCARDS)
 // ============================================================================
 class HomeContent extends StatefulWidget {
   final bool isVIP;
@@ -1459,11 +1513,11 @@ class _HomeContentState extends State<HomeContent> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildStepTile(context, "ደረጃ 1 (Step 1)", "ክፍያ መፈጸም", "ለዓመቱ ሙሉ 500 ብር ወይም ለግማሽ ሴሚስተር 300 ብር በ CBE (1000667301673) ወይም በ Telebirr / CBE Birr (0929698365 - MUBAREK MUSTEFA) ይክፈሉ።", Icons.account_balance_wallet, Colors.orange),
+              _buildStepTile(context, "ደረጃ 1 (Step 1)", "ክፍያ መፈጸም", "በ CBE (1000667301673) ወይም በ Telebirr / CBE Birr (0929698365 - MUBAREK MUSTEFA) ይክፈሉ።", Icons.account_balance_wallet, Colors.orange),
               const SizedBox(height: 12),
               _buildStepTile(context, "ደረጃ 2 (Step 2)", "ደረሰኝ መላክ (Screenshot)", "ከታች ያለውን 'አሁኑኑ ተመዝገብ' የሚለውን ቁልፍ ተጭነው የከፈሉበትን ደረሰኝ ፎቶ (Screenshot) አያይዘው ይላኩ።", Icons.camera_alt_rounded, Colors.blue),
               const SizedBox(height: 12),
-              _buildStepTile(context, "ደረጃ 3 (Step 3)", "ወዲያውኑ VIP መሆን", "ክፍያዎ እንደታየ ወዲያውኑ ሁሉም ፈተናዎች፣ ኩዊዞች እና የቴሌግራም VIP ቲቶሪያል ክፍሎች ይከፈቱልዎታል!", Icons.verified_rounded, Colors.green),
+              _buildStepTile(context, "ደረጃ 3 (Step 3)", "ወዲያውኑ VIP መሆን", "ክፍያዎ እንደታየ ወዲያውኑ ሁሉም ፈተናዎች፣ Short Notes & PDFs፣ Flashcards እና የቴሌግራም VIP ክላስ ይከፈቱልዎታል!", Icons.verified_rounded, Colors.green),
             ],
           ),
         ),
@@ -1532,7 +1586,7 @@ class _HomeContentState extends State<HomeContent> {
                       child: Text("❌ የላኩት ጥያቄ አልፀደቀም፤ እባክዎ ትክክለኛውን ደረሰኝ ይላኩ።", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 13)),
                     ),
                   Text(
-                    "ሰላም premium ሆነው አመቱን ሙሉ ከኛ ጋር ለመማር 500 ብር ለ ግማሽ semester ደሞ 300 ብር ከታች ባሉት accounts ያስገቡና send screen shoot ይበሉት ክፍያው ታይቶ ወዲያም premium ትደረጋላቹ",
+                    "ሰላም VIP ሆነው ሙሉ የ2019 ሞዴል ጥያቄዎችን፣ Short Notes & PDFs፣ Flashcards እና የቴሌግራም VIP ክላስ ለማግኘት ከታች ባሉት አካውንቶች ክፍያ ፈጽመው ደረሰኝ ይላኩ።",
                     style: TextStyle(color: textPrimary(context), fontSize: 13.5, height: 1.5),
                   ),
                   const SizedBox(height: 15),
@@ -1567,7 +1621,12 @@ class _HomeContentState extends State<HomeContent> {
                       child: ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9), padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
                         onPressed: () async {
-                          final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 30);
+                          // ✅ Compressed image upload for fast receipt viewing
+                          final XFile? image = await picker.pickImage(
+                            source: ImageSource.gallery,
+                            maxWidth: 900,
+                            imageQuality: 45,
+                          );
                           if (image != null) {
                             setStateDialog(() {
                               selectedImage = File(image.path);
@@ -1688,6 +1747,14 @@ class _HomeContentState extends State<HomeContent> {
     );
   }
 
+  Future<void> _openVipClass(BuildContext context) async {
+    if (!widget.isVIP) {
+      _showPremiumDialog(context);
+    } else {
+      await launchUrl(Uri.parse('https://t.me/+yQdJM7LxN8VmNWY0'), mode: LaunchMode.externalApplication);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     bool dark = isDarkMode(context);
@@ -1752,7 +1819,7 @@ class _HomeContentState extends State<HomeContent> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            "ሰላም ${widget.userName} • Small progress is still progress",
+                            "ሰላም ${widget.userName} • v$APP_VERSION Ready",
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -1826,7 +1893,6 @@ class _HomeContentState extends State<HomeContent> {
             ),
           ),
 
-          // ⏳ EXAM COUNTDOWN (IF SET BY ADMIN)
           if (widget.examDaysLeft != null) ...[
             const SizedBox(height: 12),
             Container(
@@ -1861,7 +1927,6 @@ class _HomeContentState extends State<HomeContent> {
             ),
           ],
 
-          // VIP UPGRADE BANNER (FOR FREE USERS)
           if (!widget.isVIP) ...[
             const SizedBox(height: 14),
             InkWell(
@@ -1887,7 +1952,7 @@ class _HomeContentState extends State<HomeContent> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: const [
-                          Text("🌟 VIP አባል ይሁኑ (Unlock All Exams)", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 14.5)),
+                          Text("🌟 VIP አባል ይሁኑ (Unlock All Exams & PDFs)", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 14.5)),
                           SizedBox(height: 2),
                           Text("የአመዘጋገብ ቅደም ተከተሉን (Steps) ለማየት እዚህ ይጫኑ!", style: TextStyle(color: Colors.black87, fontSize: 12, fontWeight: FontWeight.w600)),
                         ],
@@ -1900,9 +1965,9 @@ class _HomeContentState extends State<HomeContent> {
             ),
           ],
 
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
 
-          // 2. 📚 MAIN 2x2 FEATURE CARDS (CLEAN MODERN DESIGN)
+          // 2. 📚 MAIN FEATURE GRID (INCLUDING SHORT NOTES & PDFS + FLASHCARDS)
           GridView.count(
             crossAxisCount: 2,
             crossAxisSpacing: 12,
@@ -1913,12 +1978,13 @@ class _HomeContentState extends State<HomeContent> {
             children: [
               _buildModernTile(
                 context,
-                title: "Syllabus & Schedule",
-                subtitle: "2019 All Courses",
-                icon: Icons.menu_book_rounded,
-                color: Colors.orange,
+                title: "Short Notes & PDFs",
+                subtitle: "By Course & Chapter",
+                icon: Icons.picture_as_pdf_rounded,
+                color: Colors.deepOrange,
                 isLocked: false,
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StudyScheduleScreen(userStream: widget.userStream, onMarkedDone: widget.onProgressRefresh))),
+                badgeText: "NEW",
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ShortNotesAndPdfsScreen(isVIP: widget.isVIP, onNeedVip: () => _showPremiumDialog(context)))),
               ),
               _buildModernTile(
                 context,
@@ -1927,7 +1993,7 @@ class _HomeContentState extends State<HomeContent> {
                 icon: Icons.play_circle_outline_rounded,
                 color: Colors.purple,
                 isLocked: false,
-                badgeText: "2019",
+                badgeText: "427 Qs",
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams'))).then((_) => widget.onProgressRefresh()),
               ),
               _buildModernTile(
@@ -1944,27 +2010,25 @@ class _HomeContentState extends State<HomeContent> {
               ),
               _buildModernTile(
                 context,
-                title: "Exam Trainer",
-                subtitle: "Smart Practice",
-                icon: Icons.psychology_rounded,
-                color: Colors.blue,
+                title: "Flashcards",
+                subtitle: "Fast Flip Revision",
+                icon: Icons.style_rounded,
+                color: Colors.indigo,
                 isLocked: !widget.isVIP,
+                badgeText: "v1.4",
                 onTap: () {
                   if (!widget.isVIP) _showPremiumDialog(context);
-                  else Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'trainer', year: '2019', title: 'Exam Trainer'))).then((_) => widget.onProgressRefresh());
+                  else Navigator.push(context, MaterialPageRoute(builder: (_) => const FlashcardsCourseScreen()));
                 },
               ),
               _buildModernTile(
                 context,
-                title: "Quick Quizzes",
-                subtitle: "Fast Tests",
-                icon: Icons.help_outline_rounded,
-                color: Colors.teal,
-                isLocked: !widget.isVIP,
-                onTap: () {
-                  if (!widget.isVIP) _showPremiumDialog(context);
-                  else Navigator.push(context, MaterialPageRoute(builder: (_) => const SubjectSelectionScreen(examType: 'quizzes', year: '2019', title: 'Quizzes'))).then((_) => widget.onProgressRefresh());
-                },
+                title: "Syllabus & Schedule",
+                subtitle: "2019 All Courses",
+                icon: Icons.menu_book_rounded,
+                color: Colors.orange,
+                isLocked: false,
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StudyScheduleScreen(userStream: widget.userStream, onMarkedDone: widget.onProgressRefresh))),
               ),
               _buildModernTile(
                 context,
@@ -1980,7 +2044,140 @@ class _HomeContentState extends State<HomeContent> {
 
           const SizedBox(height: 16),
 
-          // 3. 🏆 LEADERBOARD & STUDY TIPS BANNER BUTTONS (LIKE SCREENSHOT)
+          // 3. 💼 QUICK ACTIONS & TOOLS (MOVED ABOVE LEADERBOARD & HIGHLIGHTED VIP VIDEO CLASS)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: cardBg(context),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFF5B4FE9).withOpacity(0.35), width: 1.2),
+              boxShadow: [if (!dark) BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        const Text("💼", style: TextStyle(fontSize: 18)),
+                        const SizedBox(width: 8),
+                        Text("Quick Actions & Tools", style: TextStyle(color: textPrimary(context), fontSize: 16, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    Text("v$APP_VERSION", style: TextStyle(color: textSecondary(context), fontSize: 11, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // 🎬 HIGHLIGHTED VIP CLASS VIDEO CARD
+                InkWell(
+                  onTap: () => _openVipClass(context),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF4F46E5), Color(0xFF9333EA), Color(0xFFEC4899)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF7E22CE).withOpacity(0.35),
+                          blurRadius: 12,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(9),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.22),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.play_circle_fill_rounded, color: Colors.amber, size: 30),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    widget.isVIP ? "VIP Video Class" : "VIP Video Class 🔒",
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15.5),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.amber,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Text("VIDEO", style: TextStyle(color: Colors.black, fontSize: 9.5, fontWeight: FontWeight.w900)),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              const Text(
+                                "ቀጥታ የቪዲዮ ትምህርቶችና የVIP ክላስ ግሩፕ",
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: Colors.white70, fontSize: 11.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 17),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+                GridView.count(
+                  crossAxisCount: 3,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                  childAspectRatio: 1.15,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [
+                    _actionBox(context, "Bookmarks", Icons.star_rounded, Colors.amber, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SavedQuestionsScreen()))),
+                    _actionBox(context, "Share App", Icons.card_giftcard_rounded, Colors.pinkAccent, () => shareRemedialMatrixApp(context)),
+                    _actionBox(context, "Support", Icons.support_agent_rounded, Colors.teal, () => launchUrl(Uri.parse('https://t.me/Rmedial_matrix_support'), mode: LaunchMode.externalApplication)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: dark ? Colors.greenAccent : const Color(0xFF5B4FE9),
+                      side: BorderSide(color: dark ? Colors.greenAccent : const Color(0xFF5B4FE9)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => _showActivationLogin(context),
+                    icon: Icon(widget.isAdminCached ? Icons.admin_panel_settings : Icons.vpn_key, size: 18),
+                    label: Text(widget.isAdminCached ? "Open Admin Control Center" : "VIP Activation Code / Admin", style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // 4. 🏆 LEADERBOARD & STUDY TIPS BANNER BUTTONS
           _buildGradientBannerButton(
             title: "Quiz Leaderboard",
             subtitle: "Compete with Top 10 Remedial Students!",
@@ -2001,7 +2198,7 @@ class _HomeContentState extends State<HomeContent> {
 
           const SizedBox(height: 16),
 
-          // 4. 🎯 TODAY'S CHALLENGE CARD
+          // 5. 🎯 TODAY'S CHALLENGE CARD
           InkWell(
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams'))).then((_) => widget.onProgressRefresh()),
             borderRadius: BorderRadius.circular(18),
@@ -2064,7 +2261,7 @@ class _HomeContentState extends State<HomeContent> {
 
           const SizedBox(height: 16),
 
-          // 5. 🏆 ACHIEVEMENTS & POINTS CARD
+          // 6. 🏆 ACHIEVEMENTS & POINTS CARD
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
@@ -2124,65 +2321,6 @@ class _HomeContentState extends State<HomeContent> {
                         : "✨ Great job! Keep practicing daily to unlock all 4 badges!",
                     textAlign: TextAlign.center,
                     style: TextStyle(color: textSecondary(context), fontSize: 12),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // 6. 💼 QUICK ACTIONS & TOOLS CARD (BOOKMARKS, SHARE, VIP CLASS, SUPPORT)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: cardBg(context),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: borderCol(context)),
-              boxShadow: [if (!dark) BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text("💼", style: TextStyle(fontSize: 18)),
-                    const SizedBox(width: 8),
-                    Text("Quick Actions & Tools", style: TextStyle(color: textPrimary(context), fontSize: 16, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                GridView.count(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
-                  childAspectRatio: 1.55,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  children: [
-                    _actionBox(context, "Bookmarks", Icons.star_rounded, Colors.amber, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SavedQuestionsScreen()))),
-                    _actionBox(context, "Share App", Icons.card_giftcard_rounded, Colors.pinkAccent, () => shareRemedialMatrixApp(context)),
-                    _actionBox(context, widget.isVIP ? "VIP Class" : "VIP Class 🔒", Icons.ondemand_video_rounded, Colors.indigoAccent, () async {
-                      if (!widget.isVIP) _showPremiumDialog(context);
-                      else await launchUrl(Uri.parse('https://t.me/+yQdJM7LxN8VmNWY0'), mode: LaunchMode.externalApplication);
-                    }),
-                    _actionBox(context, "Support", Icons.support_agent_rounded, Colors.teal, () => launchUrl(Uri.parse('https://t.me/Rmedial_matrix_support'), mode: LaunchMode.externalApplication)),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: dark ? Colors.greenAccent : const Color(0xFF5B4FE9),
-                      side: BorderSide(color: dark ? Colors.greenAccent : const Color(0xFF5B4FE9)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: () => _showActivationLogin(context),
-                    icon: Icon(widget.isAdminCached ? Icons.admin_panel_settings : Icons.vpn_key, size: 18),
-                    label: Text(widget.isAdminCached ? "Open Admin Control Center" : "VIP Activation Code / Admin", style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],
@@ -2341,9 +2479,381 @@ class _HomeContentState extends State<HomeContent> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: color, size: 26),
-            const SizedBox(height: 6),
-            Text(label, style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 12.5)),
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 4),
+            Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 11.5)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 📄 SHORT NOTES & PDFS BY COURSE & CHAPTER (WITH OFFLINE CACHE)
+// ============================================================================
+class ShortNotesAndPdfsScreen extends StatefulWidget {
+  final bool isVIP;
+  final VoidCallback onNeedVip;
+  const ShortNotesAndPdfsScreen({Key? key, required this.isVIP, required this.onNeedVip}) : super(key: key);
+
+  @override
+  _ShortNotesAndPdfsScreenState createState() => _ShortNotesAndPdfsScreenState();
+}
+
+class _ShortNotesAndPdfsScreenState extends State<ShortNotesAndPdfsScreen> {
+  String selectedCourse = "Biology";
+  List> items = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCourseMaterials();
+  }
+
+  Future<void> _loadCourseMaterials() async {
+    setState(() => isLoading = true);
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String cacheKey = "cached_notes_pdfs_$selectedCourse";
+    List> loaded = [];
+
+    try {
+      final snap = await dbRef("admin_content/course_materials/$selectedCourse").get().timeout(const Duration(seconds: 4));
+      if (snap.exists && snap.value is Map) {
+        (snap.value as Map).forEach((k, v) {
+          if (v is Map) {
+            Map<String, dynamic> entry = Map<String, dynamic>.from(v);
+            entry['id'] = k.toString();
+            loaded.add(entry);
+          }
+        });
+        loaded.sort((a, b) => (a['chapter'] ?? '').toString().compareTo((b['chapter'] ?? '').toString()));
+        await prefs.setString(cacheKey, jsonEncode(loaded));
+      }
+    } catch (_) {
+      String? cached = prefs.getString(cacheKey);
+      if (cached != null) {
+        try {
+          List raw = jsonDecode(cached);
+          loaded = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+        } catch (_) {}
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        items = loaded;
+        isLoading = false;
+      });
+    }
+  }
+
+  Map<String, List>> _groupByChapter() {
+    Map<String, List>> grouped = {};
+    for (var item in items) {
+      String ch = (item['chapter'] ?? 'General Chapter').toString().trim();
+      if (ch.isEmpty) ch = 'General Chapter';
+      grouped.putIfAbsent(ch, () => []).add(item);
+    }
+    return grouped;
+  }
+
+  void _openItem(Map<String, dynamic> item) {
+    bool vipOnly = item['vip_only'] == true;
+    if (vipOnly && !widget.isVIP) {
+      widget.onNeedVip();
+      return;
+    }
+
+    String kind = (item['kind'] ?? 'short').toString();
+    String title = (item['title'] ?? 'Study Material').toString();
+    String chapter = (item['chapter'] ?? '').toString();
+    String bodyOrUrl = (item['content'] ?? '').toString();
+
+    if (kind == 'pdf') {
+      launchUrl(Uri.parse(bodyOrUrl), mode: LaunchMode.externalApplication);
+    } else {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: cardBg(context),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text("$selectedCourse • $chapter", style: const TextStyle(color: Colors.deepOrange, fontSize: 12, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text("📝 $title", style: TextStyle(color: textPrimary(context), fontSize: 17, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
+            child: SingleChildScrollView(
+              child: Text(bodyOrUrl, style: TextStyle(color: textPrimary(context), fontSize: 14.5, height: 1.55)),
+            ),
+          ),
+          actions: [
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9)),
+              onPressed: () => Navigator.pop(context),
+              child: const Text("ዝጋ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Map<String, List>> byChapter = _groupByChapter();
+    List<String> chapterKeys = byChapter.keys.toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("📄 Short Notes & PDFs"),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadCourseMaterials),
+        ],
+      ),
+      body: Column(
+        children: [
+          SizedBox(
+            height: 52,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              itemCount: ALL_COURSES.length,
+              itemBuilder: (context, i) {
+                String c = ALL_COURSES[i];
+                bool active = c == selectedCourse;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(c),
+                    selected: active,
+                    selectedColor: const Color(0xFF5B4FE9),
+                    labelStyle: TextStyle(color: active ? Colors.white : textPrimary(context), fontWeight: FontWeight.bold, fontSize: 12.5),
+                    onSelected: (_) {
+                      setState(() => selectedCourse = c);
+                      _loadCourseMaterials();
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+          Expanded(
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : chapterKeys.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24.0),
+                          child: Text(
+                            "ለ $selectedCourse እስካሁን Short Note ወይም PDF አልተጫነም።\nከAdmin Page → '📄 Short Notes & PDFs ጫን' በየChapter መጫን ይችላሉ።",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: textSecondary(context), height: 1.5),
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(14),
+                        itemCount: chapterKeys.length,
+                        itemBuilder: (context, idx) {
+                          String ch = chapterKeys[idx];
+                          List> chItems = byChapter[ch] ?? [];
+                          return Card(
+                            color: cardBg(context),
+                            margin: const EdgeInsets.only(bottom: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: borderCol(context))),
+                            child: ExpansionTile(
+                              initiallyExpanded: idx == 0,
+                              leading: const CircleAvatar(
+                                backgroundColor: Color(0xFF5B4FE9),
+                                child: Icon(Icons.folder_open_rounded, color: Colors.white, size: 20),
+                              ),
+                              title: Text(ch, style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 15)),
+                              subtitle: Text("${chItems.length} item(s) • Short & PDF", style: TextStyle(color: textSecondary(context), fontSize: 12)),
+                              children: chItems.map((it) {
+                                bool isPdf = (it['kind'] ?? 'short') == 'pdf';
+                                bool vipOnly = it['vip_only'] == true;
+                                bool locked = vipOnly && !widget.isVIP;
+                                return ListTile(
+                                  leading: Icon(
+                                    isPdf ? Icons.picture_as_pdf_rounded : Icons.article_rounded,
+                                    color: isPdf ? Colors.redAccent : Colors.teal,
+                                  ),
+                                  title: Text(
+                                    (it['title'] ?? 'Untitled').toString(),
+                                    style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.w600, fontSize: 14),
+                                  ),
+                                  subtitle: Text(
+                                    "${isPdf ? 'PDF File' : 'Short Note'} • ${vipOnly ? 'VIP Only' : 'Free'}",
+                                    style: TextStyle(color: textSecondary(context), fontSize: 11.5),
+                                  ),
+                                  trailing: Icon(
+                                    locked ? Icons.lock_rounded : (isPdf ? Icons.open_in_new : Icons.chevron_right),
+                                    color: locked ? Colors.amber : textSecondary(context),
+                                  ),
+                                  onTap: () => _openItem(it),
+                                );
+                              }).toList(),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 🃏 FLASHCARDS SCREEN (FAST FLIP REVISION)
+// ============================================================================
+class FlashcardsCourseScreen extends StatelessWidget {
+  const FlashcardsCourseScreen({Key? key}) : super(key: key);
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("🃏 Flashcards - Select Course")),
+      body: GridView.builder(
+        padding: const EdgeInsets.all(16),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 2.0),
+        itemCount: ALL_COURSES.length,
+        itemBuilder: (c, i) => ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FlashcardDeckScreen(subject: ALL_COURSES[i]))),
+          child: Text(ALL_COURSES[i], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+        ),
+      ),
+    );
+  }
+}
+
+class FlashcardDeckScreen extends StatefulWidget {
+  final String subject;
+  const FlashcardDeckScreen({Key? key, required this.subject}) : super(key: key);
+  @override
+  _FlashcardDeckScreenState createState() => _FlashcardDeckScreenState();
+}
+
+class _FlashcardDeckScreenState extends State<FlashcardDeckScreen> {
+  List cards = [];
+  int idx = 0;
+  bool showAnswer = false;
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCards();
+  }
+
+  Future<void> _loadCards() async {
+    List gathered = [];
+    for (String assetPath in ['assets/remedial_2019_model_exams.json', 'assets/questions.json']) {
+      try {
+        final raw = await rootBundle.loadString(assetPath);
+        final parsed = jsonDecode(raw);
+        if (parsed is Map && parsed['model_exams'] != null) {
+          (parsed['model_exams'] as Map).forEach((yr, subMap) {
+            if (subMap is Map && subMap[widget.subject] is List) {
+              gathered.addAll(subMap[widget.subject]);
+            }
+          });
+        }
+      } catch (_) {}
+    }
+    gathered.shuffle();
+    if (mounted) {
+      setState(() {
+        cards = gathered.take(25).toList();
+        loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) return Scaffold(appBar: AppBar(title: Text("${widget.subject} Flashcards")), body: const Center(child: CircularProgressIndicator()));
+    if (cards.isEmpty) return Scaffold(appBar: AppBar(title: Text("${widget.subject} Flashcards")), body: const Center(child: Text("Flashcards አልተገኙም!")));
+
+    Map current = cards[idx] as Map;
+    List opts = (current['options'] is List) ? current['options'] : [];
+    int cId = int.tryParse(current['correct_option_id']?.toString() ?? '0') ?? 0;
+    String answerText = opts.length > cId ? opts[cId].toString() : "N/A";
+    String expText = (current['explanation'] ?? '').toString();
+
+    return Scaffold(
+      appBar: AppBar(title: Text("🃏 ${widget.subject} (${idx + 1}/${cards.length})")),
+      body: Padding(
+        padding: const EdgeInsets.all(18.0),
+        child: Column(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: () => setState(() => showAnswer = !showAnswer),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    color: cardBg(context),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: showAnswer ? Colors.green : const Color(0xFF5B4FE9), width: 1.8),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          showAnswer ? "✅ ANSWER & EXPLANATION" : "❓ QUESTION (Tap to flip)",
+                          style: TextStyle(color: showAnswer ? Colors.green : const Color(0xFF5B4FE9), fontWeight: FontWeight.bold, fontSize: 12.5),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          showAnswer ? answerText : (current['question'] ?? '').toString(),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: textPrimary(context), fontSize: 18, fontWeight: FontWeight.bold, height: 1.45),
+                        ),
+                        if (showAnswer && expText.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          Text("💡 $expText", textAlign: TextAlign.center, style: TextStyle(color: textSecondary(context), fontSize: 14, height: 1.45)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                    onPressed: () => setState(() => showAnswer = !showAnswer),
+                    child: Text(showAnswer ? "Show Question" : "Reveal Answer"),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9), padding: const EdgeInsets.symmetric(vertical: 14)),
+                    onPressed: () {
+                      setState(() {
+                        idx = (idx + 1) % cards.length;
+                        showAnswer = false;
+                      });
+                    },
+                    child: const Text("Next Card ➡️", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -2714,7 +3224,6 @@ class _ProfileContentState extends State<ProfileContent> {
           Text("Status: ${widget.appStatus.toUpperCase()}  |  v$APP_VERSION  |  💎 ${widget.points} Pts  |  🔥 ${widget.streak}d", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: textSecondary(context))),
           const SizedBox(height: 16),
 
-          // 🌗 Dark/Light Mode Switch Tile
           Container(
             decoration: BoxDecoration(color: cardBg(context), borderRadius: BorderRadius.circular(14), border: Border.all(color: borderCol(context))),
             child: SwitchListTile(
@@ -2917,7 +3426,7 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
 }
 
 // ============================================================================
-// 🛠 ADMIN DASHBOARD (LIVE STATS + VERSION TRACKING + BACKUP + LIVE QUESTIONS)
+// 🛠 ADMIN DASHBOARD (LIVE STATS + SHORT NOTES/PDFS UPLOAD + FAST RECEIPTS)
 // ============================================================================
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({Key? key}) : super(key: key);
@@ -3003,7 +3512,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       await Clipboard.setData(ClipboardData(text: jsonText));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ የሁሉም ተማሪዎች ዳታ ባክአፕ Copy ተደርጓል! ቴሌግራም Saved Messages ላይ ሴቭ አድርገው።"), backgroundColor: Colors.green),
+          const SnackBar(content: Text("✅ የሁሉም ተማሪዎች ዳታ ባክአፕ Copy ተደርጓል!"), backgroundColor: Colors.green),
         );
       }
     } catch (_) {}
@@ -3114,7 +3623,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.amber, minimumSize: const Size(double.infinity, 50)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminReceiptsScreen())).then((_) => _loadStats()),
               icon: const Icon(Icons.receipt_long, color: Colors.black),
-              label: Text("📥 አዲስ ደረሰኞችን አረጋግጥ ($pendingCount Pending)", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              label: Text("⚡ አዲስ ደረሰኞችን አረጋግጥ ($pendingCount Pending)", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15), backgroundColor: Colors.deepOrange, minimumSize: const Size(double.infinity, 50)),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminUploadShortPdfScreen())),
+              icon: const Icon(Icons.picture_as_pdf, color: Colors.white),
+              label: const Text("📄 Short Notes & PDFs ጫን (By Course & Chapter)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 12),
             ElevatedButton.icon(
@@ -3188,6 +3704,132 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 }
 
 // ============================================================================
+// 📄 ADMIN UPLOAD SHORT NOTES & PDFS BY COURSE & CHAPTER
+// ============================================================================
+class AdminUploadShortPdfScreen extends StatefulWidget {
+  const AdminUploadShortPdfScreen({Key? key}) : super(key: key);
+  @override
+  _AdminUploadShortPdfScreenState createState() => _AdminUploadShortPdfScreenState();
+}
+
+class _AdminUploadShortPdfScreenState extends State<AdminUploadShortPdfScreen> {
+  String course = "Biology";
+  String chapter = "Chapter 1";
+  String kind = "short"; // 'short' or 'pdf'
+  bool vipOnly = true;
+  bool saving = false;
+
+  final TextEditingController chapterCtrl = TextEditingController(text: "Chapter 1");
+  final TextEditingController titleCtrl = TextEditingController();
+  final TextEditingController bodyOrUrlCtrl = TextEditingController();
+
+  Future<void> _saveMaterial() async {
+    String ch = chapterCtrl.text.trim();
+    String title = titleCtrl.text.trim();
+    String content = bodyOrUrlCtrl.text.trim();
+
+    if (ch.isEmpty || title.isEmpty || content.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("እባክዎ Chapter፣ ርዕስ እና Short Note/PDF ሊንክ ይሙሉ!"), backgroundColor: Colors.red));
+      return;
+    }
+
+    setState(() => saving = true);
+    try {
+      await dbRef("admin_content/course_materials/$course").push().set({
+        "chapter": ch,
+        "kind": kind,
+        "title": title,
+        "content": content,
+        "vip_only": vipOnly,
+        "time": DateTime.now().millisecondsSinceEpoch,
+      });
+      if (mounted) {
+        titleCtrl.clear();
+        bodyOrUrlCtrl.clear();
+        setState(() => saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("✅ ወደ $course → $ch ($kind) ተጨምሯል!"), backgroundColor: Colors.green));
+      }
+    } catch (_) {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    bool isPdf = kind == 'pdf';
+    return Scaffold(
+      appBar: AppBar(title: const Text("📄 Upload Short Note / PDF")),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            DropdownButtonFormField<String>(
+              value: course,
+              dropdownColor: cardBg(context),
+              decoration: const InputDecoration(labelText: "Course (ትምህርት)", border: OutlineInputBorder()),
+              items: ALL_COURSES.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+              onChanged: (v) => setState(() => course = v ?? "Biology"),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: chapterCtrl,
+              decoration: const InputDecoration(labelText: "Chapter (ምሳሌ: Chapter 1: Cell Biology)", border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: kind,
+                    dropdownColor: cardBg(context),
+                    decoration: const InputDecoration(labelText: "Type", border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(value: 'short', child: Text("📝 Short Note")),
+                      DropdownMenuItem(value: 'pdf', child: Text("📄 PDF Link")),
+                    ],
+                    onChanged: (v) => setState(() => kind = v ?? 'short'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: SwitchListTile(
+                    title: const Text("VIP Only", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                    value: vipOnly,
+                    activeColor: Colors.amber,
+                    onChanged: (val) => setState(() => vipOnly = val),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: titleCtrl,
+              decoration: const InputDecoration(labelText: "ርዕስ (Title)", border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: bodyOrUrlCtrl,
+              maxLines: isPdf ? 2 : 6,
+              decoration: InputDecoration(
+                labelText: isPdf ? "PDF URL / Drive / Telegram Link" : "Short Note Content (አጭር ማስታወሻ)",
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 18),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.deepOrange, minimumSize: const Size(double.infinity, 52)),
+              onPressed: saving ? null : _saveMaterial,
+              icon: const Icon(Icons.cloud_upload, color: Colors.white),
+              label: saving ? const CircularProgressIndicator(color: Colors.white) : const Text("አስቀምጥ (Save to Chapter)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
 // ➕ LIVE QUESTION UPLOADER
 // ============================================================================
 class AdminAddQuestionScreen extends StatefulWidget {
@@ -3209,8 +3851,6 @@ class _AdminAddQuestionScreenState extends State<AdminAddQuestionScreen> {
   final cCtrl = TextEditingController();
   final dCtrl = TextEditingController();
   final expCtrl = TextEditingController();
-
-  final List<String> subjects = ["Biology", "Chemistry", "Physics", "Mathematics", "English", "History", "Geography"];
 
   Future _saveQuestion() async {
     if (qCtrl.text.trim().isEmpty || aCtrl.text.trim().isEmpty || bCtrl.text.trim().isEmpty) {
@@ -3279,7 +3919,7 @@ class _AdminAddQuestionScreenState extends State<AdminAddQuestionScreen> {
               value: subject,
               dropdownColor: cardBg(context),
               decoration: const InputDecoration(labelText: "Subject", border: OutlineInputBorder()),
-              items: subjects.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+              items: ALL_COURSES.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
               onChanged: (v) => setState(() => subject = v ?? 'Biology'),
             ),
             const SizedBox(height: 12),
@@ -3571,7 +4211,7 @@ class _AdminBroadcastScreenState extends State<AdminBroadcastScreen> {
             const SizedBox(height: 16),
             TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: "ርዕስ (Title)", border: OutlineInputBorder())),
             const SizedBox(height: 15),
-            TextField(controller: msgCtrl, maxLines: 5, decoration: const InputDecoration(labelText: "መልዕክት (Message)", border: OutlineInputBorder())),
+            TextField(controller: msgCtrl, maxLines: 6, decoration: const InputDecoration(labelText: "መልዕክት (Message)", border: OutlineInputBorder())),
             const SizedBox(height: 20),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.green, minimumSize: const Size(double.infinity, 52)),
@@ -3689,16 +4329,17 @@ class AdminUpdateAppScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     TextEditingController verCtrl = TextEditingController(text: APP_VERSION);
     TextEditingController urlCtrl = TextEditingController(text: DEFAULT_DIRECT_APK_URL);
-    TextEditingController whatsNewCtrl = TextEditingController(text: "• አዲስ ውብ Dark & Light Mode ገጽታ\n• የ2019 ሙሉ Model Exam (7 ትምህርቶች - 427 ጥያቄዎች)\n• Daily Streak፣ Today's Challenge እና Achievements");
+    TextEditingController whatsNewCtrl = TextEditingController(
+        text: "• Short Notes & PDFs በየCourse እና በየChapter\n• Flashcards & Quick Actions ከላይ\n• ፈጣን የAdmin ደረሰኝ Refresh እና Scroll Fix");
 
     return Scaffold(
       appBar: AppBar(title: const Text("🚀 1xBet-Style Update ልቀቅ")),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(children: [
-          Text("ይህንን ስትጫን የድሮውን አፕ (V1.2.0 እና ከዚያ በፊት) ለያዙ ተማሪዎች ወዲያውኑ ወደ V$APP_VERSION እንዲያድጉ ማሳወቂያ ይደርሳቸዋል!", style: TextStyle(color: isDarkMode(context) ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.w600)),
+          Text("ይህንን ስትጫን የድሮውን አፕ ለያዙ ተማሪዎች ወዲያውኑ ወደ V$APP_VERSION እንዲያድጉ ማሳወቂያ ይደርሳቸዋል!", style: TextStyle(color: isDarkMode(context) ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.w600)),
           const SizedBox(height: 20),
-          TextField(controller: verCtrl, decoration: const InputDecoration(labelText: "አዲሱ ቨርሽን (ምሳሌ: 1.3.0)", border: OutlineInputBorder())),
+          TextField(controller: verCtrl, decoration: const InputDecoration(labelText: "አዲሱ ቨርሽን (ምሳሌ: 1.4.0)", border: OutlineInputBorder())),
           const SizedBox(height: 15),
           TextField(controller: urlCtrl, decoration: const InputDecoration(labelText: "Direct APK Download URL (Remedial-Updates)", border: OutlineInputBorder())),
           const SizedBox(height: 15),
@@ -3727,7 +4368,6 @@ class AdminUpdateAppScreen extends StatelessWidget {
   }
 }
 
-// 👥 ADMIN STUDENT LIST WITH SEARCH BAR + FILTER + VERSION BADGE
 class AdminStudentListScreen extends StatefulWidget {
   const AdminStudentListScreen({Key? key}) : super(key: key);
   @override
@@ -3881,6 +4521,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
   }
 }
 
+// ⚡ FAST ADMIN RECEIPTS SCREEN (QUERIES ONLY PENDING + CACHED DECODED IMAGES)
 class AdminReceiptsScreen extends StatefulWidget {
   const AdminReceiptsScreen({Key? key}) : super(key: key);
   @override
@@ -3888,7 +4529,8 @@ class AdminReceiptsScreen extends StatefulWidget {
 }
 
 class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
-  List pendingStudents = [];
+  List> pendingStudents = [];
+  final Map<String, Uint8List> _decodedImageCache = {};
   bool isLoading = true;
 
   @override
@@ -3897,71 +4539,122 @@ class _AdminReceiptsScreenState extends State<AdminReceiptsScreen> {
     fetchReceipts();
   }
 
-  Future fetchReceipts() async {
+  Future<void> fetchReceipts() async {
+    if (mounted) setState(() => isLoading = true);
     try {
-      final snap = await dbRef("students").get();
-      List temp = [];
-      if (snap.exists) {
+      final snap = await dbRef("students")
+          .orderByChild("status")
+          .equalTo("pending")
+          .get()
+          .timeout(const Duration(seconds: 6));
+
+      List> temp = [];
+      if (snap.exists && snap.value is Map) {
         (snap.value as Map).forEach((k, v) {
-          if (v['status'] == 'pending') {
-            Map s = Map.from(v);
-            s['device_id'] = k;
+          if (v is Map) {
+            Map<String, dynamic> s = Map<String, dynamic>.from(v);
+            String devId = k.toString();
+            s['device_id'] = devId;
             temp.add(s);
+
+            String? b64 = s['receipt']?.toString();
+            if (b64 != null && b64.isNotEmpty && !_decodedImageCache.containsKey(devId)) {
+              try {
+                _decodedImageCache[devId] = base64Decode(b64);
+              } catch (_) {}
+            }
           }
         });
       }
-      if (mounted) setState(() {
-        pendingStudents = temp;
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          pendingStudents = temp;
+          isLoading = false;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => isLoading = false);
     }
   }
 
-  Future decideReceipt(String deviceId, String decision) async {
+  Future<void> decideReceipt(String deviceId, String decision) async {
     try {
       await dbRef("students/$deviceId").update({"status": decision});
-      fetchReceipts();
-    } catch (e) {}
+      _decodedImageCache.remove(deviceId);
+      setState(() {
+        pendingStudents.removeWhere((item) => item['device_id'] == deviceId);
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("✅ Status updated to $decision"), backgroundColor: decision == 'vip' ? Colors.green : Colors.orange),
+        );
+      }
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("📥 Pending VIP Requests")),
+      appBar: AppBar(
+        title: Text("⚡ Pending VIP (${pendingStudents.length})"),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh, color: Colors.amber), onPressed: fetchReceipts),
+        ],
+      ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : pendingStudents.isEmpty
-              ? const Center(child: Text("ምንም አዲስ ጥያቄ የለም!"))
-              : ListView.builder(
-                  itemCount: pendingStudents.length,
-                  itemBuilder: (c, i) {
-                    var s = pendingStudents[i];
-                    int id = s['short_id'] ?? 0;
-                    return Card(
-                      margin: const EdgeInsets.all(10),
-                      color: cardBg(context),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: Column(children: [
-                          Text("👤 ስም: ${s['full_name']}", style: TextStyle(color: textPrimary(context), fontSize: 16, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 6),
-                          Text("🆔 ID: $id   |   🔑 VIP Code: ${id * 3}", style: const TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 12),
-                          if (s['receipt'] != null)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 12.0),
-                              child: ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(base64Decode(s['receipt']), height: 300, width: double.infinity, fit: BoxFit.cover)),
-                            ),
-                          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                            ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: () => decideReceipt(s['device_id'], 'rejected'), icon: const Icon(Icons.close, color: Colors.white), label: const Text("Decline", style: TextStyle(color: Colors.white))),
-                            ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: () => decideReceipt(s['device_id'], 'vip'), icon: const Icon(Icons.check, color: Colors.white), label: const Text("Approve VIP", style: TextStyle(color: Colors.white))),
-                          ])
-                        ]),
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text("ምንም አዲስ ጥያቄ የለም!"),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: fetchReceipts,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Refresh Again"),
                       ),
-                    );
-                  },
+                    ],
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: fetchReceipts,
+                  child: ListView.builder(
+                    itemCount: pendingStudents.length,
+                    itemBuilder: (c, i) {
+                      var s = pendingStudents[i];
+                      String devId = s['device_id'].toString();
+                      int id = int.tryParse(s['short_id']?.toString() ?? '0') ?? 0;
+                      Uint8List? imgBytes = _decodedImageCache[devId];
+
+                      return Card(
+                        margin: const EdgeInsets.all(10),
+                        color: cardBg(context),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(children: [
+                            Text("👤 ስም: ${s['full_name']}", style: TextStyle(color: textPrimary(context), fontSize: 16, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 6),
+                            Text("🆔 ID: $id   |   🔑 VIP Code: ${id * 3}", style: const TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 12),
+                            if (imgBytes != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 12.0),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.memory(imgBytes, height: 300, width: double.infinity, fit: BoxFit.cover, gaplessPlayback: true),
+                                ),
+                              ),
+                            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                              ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: () => decideReceipt(devId, 'rejected'), icon: const Icon(Icons.close, color: Colors.white), label: const Text("Decline", style: TextStyle(color: Colors.white))),
+                              ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: () => decideReceipt(devId, 'vip'), icon: const Icon(Icons.check, color: Colors.white), label: const Text("Approve VIP", style: TextStyle(color: Colors.white))),
+                            ])
+                          ]),
+                        ),
+                      );
+                    },
+                  ),
                 ),
     );
   }
@@ -4032,9 +4725,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   }
 }
 
-// ============================================================================
-// 📝 QUIZ SCREEN (LOADS questions.json + 2019 MODEL EXAMS + LIVE QUESTIONS)
-// ============================================================================
 class QuizScreen extends StatefulWidget {
   final String examType;
   final String year;
@@ -4098,24 +4788,21 @@ class _QuizScreenState extends State<QuizScreen> {
   Future loadQuestions() async {
     try {
       String targetType = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? 'model_exams' : widget.examType;
-      String targetYear = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? widget.year : widget.year;
+      String targetYear = widget.year;
       List rawList = [];
 
-      // 1. Load from assets/questions.json
       try {
         final jsonString = await rootBundle.loadString('assets/questions.json');
         final parsed = jsonDecode(jsonString);
         _extractFromParsed(parsed, targetType, targetYear, rawList);
       } catch (_) {}
 
-      // 2. Load from assets/remedial_2019_model_exams.json (427 New 2019 Model Exam Questions)
       try {
         final json2019 = await rootBundle.loadString('assets/remedial_2019_model_exams.json');
         final parsed2019 = jsonDecode(json2019);
         _extractFromParsed(parsed2019, targetType, targetYear, rawList);
       } catch (_) {}
 
-      // 3. Merge Live Questions uploaded from Admin Dashboard
       try {
         String liveSub = widget.subject == "Maths" ? "Mathematics" : widget.subject;
         final snap = await dbRef("live_questions/$targetType/$targetYear/$liveSub").get().timeout(const Duration(seconds: 3));
@@ -4485,21 +5172,19 @@ class SubjectSelectionScreen extends StatelessWidget {
   const SubjectSelectionScreen({Key? key, required this.examType, required this.year, required this.title}) : super(key: key);
   @override
   Widget build(BuildContext context) {
-    final subs = ["Biology", "Chemistry", "Physics", "Mathematics", "English", "History", "Geography"];
     final colors = [Colors.green, Colors.orange, Colors.blue, Colors.redAccent, Colors.purple, Colors.brown, Colors.teal];
     return Scaffold(
       appBar: AppBar(title: Text(title)),
       body: GridView.builder(
         padding: const EdgeInsets.all(16),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 2.2),
-        itemCount: subs.length,
+        itemCount: ALL_COURSES.length,
         itemBuilder: (c, i) => ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: colors[i % colors.length], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QuizScreen(examType: examType, year: year, subject: subs[i]))),
-          child: Text(subs[i], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QuizScreen(examType: examType, year: year, subject: ALL_COURSES[i]))),
+          child: Text(ALL_COURSES[i], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
         ),
       ),
     );
   }
 }
-
