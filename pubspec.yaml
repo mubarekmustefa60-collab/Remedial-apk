@@ -1,7 +1,7 @@
 name: remedial_matrix
 description: Remedial Matrix Educational App
 publish_to: 'none'
-version: 1.3.0+4
+version: 1.4.0+5
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -38,4 +38,3 @@ flutter:
     - assets/questions.json
     - assets/remedial_2019_model_exams.json
     - assets/logo.png
-
