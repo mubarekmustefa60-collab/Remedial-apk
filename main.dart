@@ -645,7 +645,7 @@ class _InAppUpdateScreenState extends State<InAppUpdateScreen> {
 // ============================================================================
 // 📚 OFFICIAL 2019 REMEDIAL COURSE OUTLINES
 // ============================================================================
-const Map officialCourseOutlines = {
+const Map<String, List>> officialCourseOutlines = {
   "Mathematics": [
     {"unit": "Unit 1: Further on Sets and the Number System (6 hrs)", "topics": "• Further on sets (Concept, Notion, Operations & Applications)\n• The Number System (Natural, Integers, Rational, Irrational & Real Numbers)"},
     {"unit": "Unit 2: Solving Equations and Inequalities (7 hrs)", "topics": "• Linear Equations in One & Two Variables, Non-linear Equations\n• Linear Inequalities, Absolute Value & Quadratic Inequalities"},
@@ -726,7 +726,7 @@ const Map officialCourseOutlines = {
   ],
 };
 
-Map getDefaultSchedule() {
+Map<String, Map<String, String>> getDefaultSchedule() {
   return {
     "Natural": {
       "Monday": "📐 Mathematics: Unit 1 (Sets & Number System) & Unit 2 (Solving Equations and Inequalities)",
@@ -795,7 +795,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
     checkRegistration();
   }
 
-  Future checkRegistration() async {
+  Future<void> checkRegistration() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       bool localRegistered = prefs.getBool('local_registered') ?? false;
@@ -877,7 +877,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String selectedStream = 'Natural';
   bool isSaving = false;
 
-  Future registerUser() async {
+  Future<void> registerUser() async {
     String enteredName = nameCtrl.text.trim();
     String enteredOldId = oldIdCtrl.text.trim();
 
@@ -1013,8 +1013,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               decoration: BoxDecoration(color: cardBg(context), borderRadius: BorderRadius.circular(12), border: Border.all(color: borderCol(context))),
               child: Row(
                 children: [
-                  Expanded(child: RadioListTile(activeColor: const Color(0xFF5B4FE9), title: const Text("Natural"), value: "Natural", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
-                  Expanded(child: RadioListTile(activeColor: const Color(0xFF5B4FE9), title: const Text("Social"), value: "Social", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
+                  Expanded(child: RadioListTile<String>(activeColor: const Color(0xFF5B4FE9), title: const Text("Natural"), value: "Natural", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
+                  Expanded(child: RadioListTile<String>(activeColor: const Color(0xFF5B4FE9), title: const Text("Social"), value: "Social", groupValue: selectedStream, onChanged: (val) => setState(() => selectedStream = val.toString()))),
                 ],
               ),
             ),
@@ -1085,12 +1085,12 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     super.dispose();
   }
 
-  Future _refreshProgressStats() async {
+  Future<void> _refreshProgressStats() async {
     final stats = await StudyProgress.loadStats();
     if (mounted) setState(() => progressStats = stats);
   }
 
-  Future _initSequence() async {
+  Future<void> _initSequence() async {
     await StudyProgress.recordAppOpenStreak();
     await _refreshProgressStats();
     await _loadUserData();
@@ -1103,7 +1103,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     await _checkDailyStudyNotification();
   }
 
-  Future _loadUserData() async {
+  Future<void> _loadUserData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String stream = prefs.getString('local_stream') ?? 'Natural';
     int id = prefs.getInt('local_short_id') ?? 0;
@@ -1111,7 +1111,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     bool cachedAdmin = (prefs.getBool('owner_admin_cached') ?? false) && isOwnerUser(id, name);
 
     String dayName = getDayName(DateTime.now().weekday);
-    Map streamMap = getDefaultSchedule()[stream] ?? {};
+    Map<String, String> streamMap = getDefaultSchedule()[stream] ?? {};
     String defaultToday = (streamMap[dayName] ?? "").toString();
 
     setState(() {
@@ -1130,7 +1130,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (_) {}
   }
 
-  Future _loadExamCountdown() async {
+  Future<void> _loadExamCountdown() async {
     try {
       final snap = await dbRef("admin_settings/exam_countdown").get().timeout(const Duration(seconds: 3));
       if (snap.exists && snap.value is Map) {
@@ -1149,7 +1149,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (_) {}
   }
 
-  Future _checkAppUpdate() async {
+  Future<void> _checkAppUpdate() async {
     try {
       final snapshot = await dbRef("admin_settings/update").get();
       if (snapshot.exists) {
@@ -1174,11 +1174,11 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 
   // ✅ Scrollable Broadcast Dialog (No text clipping even for long messages)
-  Future _checkTargetedBroadcast() async {
+  Future<void> _checkTargetedBroadcast() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       bool isVIP = appStatus == 'vip';
-      List channels = ['all', isVIP ? 'vip' : 'free'];
+      List<String> channels = ['all', isVIP ? 'vip' : 'free'];
 
       for (String target in channels) {
         final snapshot = await dbRef("announcements/$target").get();
@@ -1231,14 +1231,14 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (e) {}
   }
 
-  Future _checkDailyStudyNotification() async {
+  Future<void> _checkDailyStudyNotification() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String todayKey = "${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}";
       String lastShownDay = prefs.getString('last_study_prompt_day') ?? '';
 
       String dayName = getDayName(DateTime.now().weekday);
-      Map streamMap = getDefaultSchedule()[userStream] ?? {};
+      Map<String, String> streamMap = getDefaultSchedule()[userStream] ?? {};
       String todayCourse = todayScheduleCourse.isNotEmpty
           ? todayScheduleCourse
           : (streamMap[dayName] ?? "General Revision").toString();
@@ -1304,7 +1304,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (e) {}
   }
 
-  Future refreshStatus() async {
+  Future<void> refreshStatus() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String deviceId = prefs.getString('device_id') ?? '';
     String cachedStatus = prefs.getString('local_status') ?? 'free';
@@ -1621,7 +1621,6 @@ class _HomeContentState extends State<HomeContent> {
                       child: ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B4FE9), padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
                         onPressed: () async {
-                          // ✅ Compressed image upload for fast receipt viewing
                           final XFile? image = await picker.pickImage(
                             source: ImageSource.gallery,
                             maxWidth: 900,
@@ -1768,7 +1767,7 @@ class _HomeContentState extends State<HomeContent> {
     double challengeRatio = (todayTopics / 3.0).clamp(0.0, 1.0);
 
     String todayDay = getDayName(DateTime.now().weekday);
-    Map streamMap = getDefaultSchedule()[widget.userStream] ?? {};
+    Map<String, String> streamMap = getDefaultSchedule()[widget.userStream] ?? {};
     String displaySubject = widget.todayCourse.isNotEmpty
         ? widget.todayCourse
         : (streamMap[todayDay] ?? "General Study").toString();
@@ -2879,7 +2878,7 @@ class _SavedQuestionsScreenState extends State<SavedQuestionsScreen> {
     _loadSaved();
   }
 
-  Future _loadSaved() async {
+  Future<void> _loadSaved() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String raw = prefs.getString('bookmarked_questions') ?? '[]';
     try {
@@ -2887,7 +2886,7 @@ class _SavedQuestionsScreenState extends State<SavedQuestionsScreen> {
     } catch (_) {}
   }
 
-  Future _removeBookmark(int idx) async {
+  Future<void> _removeBookmark(int idx) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     setState(() => saved.removeAt(idx));
     await prefs.setString('bookmarked_questions', jsonEncode(saved));
@@ -2956,8 +2955,8 @@ class StudyScheduleScreen extends StatefulWidget {
 
 class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
   late String selectedStream;
-  Map scheduleData = {};
-  Map completedDays = {};
+  Map<String, String> scheduleData = {};
+  Map<String, bool> completedDays = {};
   bool isLoading = true;
 
   final List<String> daysOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -2969,10 +2968,10 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
     _loadSchedule();
   }
 
-  Future _loadSchedule() async {
+  Future<void> _loadSchedule() async {
     setState(() => isLoading = true);
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    Map defaultMap = Map.from(getDefaultSchedule()[selectedStream] ?? {});
+    Map<String, String> defaultMap = Map<String, String>.from(getDefaultSchedule()[selectedStream] ?? {});
 
     try {
       final snap = await dbRef("admin_content/schedule/$selectedStream").get().timeout(const Duration(seconds: 4));
@@ -2984,7 +2983,7 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
       }
     } catch (_) {}
 
-    Map tempCompleted = {};
+    Map<String, bool> tempCompleted = {};
     for (String d in daysOrder) {
       tempCompleted[d] = prefs.getBool('study_done_${selectedStream}_$d') ?? false;
     }
@@ -2998,7 +2997,7 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
     }
   }
 
-  Future _toggleDayRead(String day) async {
+  Future<void> _toggleDayRead(String day) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     bool current = completedDays[day] == true;
     await prefs.setBool('study_done_${selectedStream}_$day', !current);
@@ -3116,7 +3115,7 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
               itemCount: streamSubjects.length,
               itemBuilder: (context, idx) {
                 String subject = streamSubjects[idx];
-                List units = (officialCourseOutlines[subject] as List?) ?? [];
+                List> units = officialCourseOutlines[subject] ?? [];
                 return Card(
                   color: cardBg(context),
                   margin: const EdgeInsets.only(bottom: 14),
@@ -3127,8 +3126,7 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
                     leading: const CircleAvatar(backgroundColor: Color(0xFF5B4FE9), child: Icon(Icons.auto_stories, color: Colors.white)),
                     title: Text("$subject Syllabus", style: TextStyle(color: textPrimary(context), fontWeight: FontWeight.bold, fontSize: 16)),
                     subtitle: Text("${units.length} Official MoE Units", style: TextStyle(color: dark ? Colors.cyanAccent : const Color(0xFF5B4FE9), fontSize: 12)),
-                    children: units.map<Widget>((u) {
-                      Map unitMap = u as Map;
+                    children: units.map<Widget>((unitMap) {
                       return Container(
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -3136,9 +3134,9 @@ class _StudyScheduleScreenState extends State<StudyScheduleScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text((unitMap["unit"] ?? "").toString(), style: TextStyle(color: dark ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.bold, fontSize: 14)),
+                            Text((unitMap["unit"] ?? ""), style: TextStyle(color: dark ? Colors.amber : const Color(0xFF5B4FE9), fontWeight: FontWeight.bold, fontSize: 14)),
                             const SizedBox(height: 6),
-                            Text((unitMap["topics"] ?? "").toString(), style: TextStyle(color: textSecondary(context), fontSize: 13, height: 1.4)),
+                            Text((unitMap["topics"] ?? ""), style: TextStyle(color: textSecondary(context), fontSize: 13, height: 1.4)),
                           ],
                         ),
                       );
@@ -3187,7 +3185,7 @@ class _ProfileContentState extends State<ProfileContent> {
     _loadAnalytics();
   }
 
-  Future _loadAnalytics() async {
+  Future<void> _loadAnalytics() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String raw = prefs.getString('subject_analytics') ?? '{}';
     try {
@@ -3310,7 +3308,7 @@ class _StudyTipsScreenState extends State<StudyTipsScreen> {
     fetchTips();
   }
 
-  Future fetchTips() async {
+  Future<void> fetchTips() async {
     try {
       final snap = await dbRef("admin_content/study_tips").get();
       if (snap.exists) {
@@ -3374,7 +3372,7 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
     fetchMaterials();
   }
 
-  Future fetchMaterials() async {
+  Future<void> fetchMaterials() async {
     try {
       final snap = await dbRef("admin_content/sample_materials").get();
       if (snap.exists) {
@@ -3452,7 +3450,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _loadStats();
   }
 
-  Future _loadStats() async {
+  Future<void> _loadStats() async {
     setState(() => loadingStats = true);
     try {
       final snap = await dbRef("students").get();
@@ -3496,7 +3494,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
   }
 
-  Future _exportBackup() async {
+  Future<void> _exportBackup() async {
     try {
       final snap = await dbRef("students").get();
       if (!snap.exists || snap.value == null) return;
@@ -3852,7 +3850,7 @@ class _AdminAddQuestionScreenState extends State<AdminAddQuestionScreen> {
   final dCtrl = TextEditingController();
   final expCtrl = TextEditingController();
 
-  Future _saveQuestion() async {
+  Future<void> _saveQuestion() async {
     if (qCtrl.text.trim().isEmpty || aCtrl.text.trim().isEmpty || bCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("እባክዎ ጥያቄውን እና ምርጫዎቹን ይሙሉ!"), backgroundColor: Colors.red));
       return;
@@ -3979,11 +3977,11 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
   @override
   void initState() {
     super.initState();
-    Map streamMap = getDefaultSchedule()[selectedStream] ?? {};
+    Map<String, String> streamMap = getDefaultSchedule()[selectedStream] ?? {};
     courseCtrl.text = (streamMap[selectedDay] ?? "").toString();
   }
 
-  Future saveAndNotifySchedule({required bool sendPushAlert}) async {
+  Future<void> saveAndNotifySchedule({required bool sendPushAlert}) async {
     if (courseCtrl.text.trim().isEmpty) return;
     setState(() => isSaving = true);
     try {
@@ -4015,8 +4013,8 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
 
   @override
   Widget build(BuildContext context) {
-    List subjectUnits = (officialCourseOutlines[selectedSubjectForPicker] as List?) ?? [];
-    List<String> subjectKeys = officialCourseOutlines.keys.map((k) => k.toString()).toList();
+    List> subjectUnits = officialCourseOutlines[selectedSubjectForPicker] ?? [];
+    List<String> subjectKeys = officialCourseOutlines.keys.toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text("📅 የ2019 ፕሮግራም ማስተካከያ")),
@@ -4042,7 +4040,7 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
                       if (val != null) {
                         setState(() {
                           selectedStream = val;
-                          Map streamMap = getDefaultSchedule()[selectedStream] ?? {};
+                          Map<String, String> streamMap = getDefaultSchedule()[selectedStream] ?? {};
                           courseCtrl.text = (streamMap[selectedDay] ?? "").toString();
                         });
                       }
@@ -4060,7 +4058,7 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
                       if (val != null) {
                         setState(() {
                           selectedDay = val;
-                          Map streamMap = getDefaultSchedule()[selectedStream] ?? {};
+                          Map<String, String> streamMap = getDefaultSchedule()[selectedStream] ?? {};
                           courseCtrl.text = (streamMap[selectedDay] ?? "").toString();
                         });
                       }
@@ -4088,9 +4086,9 @@ class _AdminScheduleManagerScreenState extends State<AdminScheduleManagerScreen>
                 scrollDirection: Axis.horizontal,
                 itemCount: subjectUnits.length,
                 itemBuilder: (context, i) {
-                  Map uMap = subjectUnits[i] as Map;
-                  String uTitle = (uMap["unit"] ?? "").toString();
-                  String uTopics = (uMap["topics"] ?? "").toString();
+                  Map<String, String> uMap = subjectUnits[i];
+                  String uTitle = (uMap["unit"] ?? "");
+                  String uTopics = (uMap["topics"] ?? "");
                   return GestureDetector(
                     onTap: () {
                       setState(() {
@@ -4159,7 +4157,7 @@ class _AdminBroadcastScreenState extends State<AdminBroadcastScreen> {
   String targetAudience = 'all';
   bool isSending = false;
 
-  Future sendBroadcast() async {
+  Future<void> sendBroadcast() async {
     if (titleCtrl.text.isEmpty || msgCtrl.text.isEmpty) return;
     setState(() => isSending = true);
     try {
@@ -4295,7 +4293,7 @@ class AdminContentScreen extends StatelessWidget {
             const SizedBox(height: 10),
             TextField(controller: urlCtrl, decoration: const InputDecoration(hintText: "የቪዲዮ ወይም የፋይል ሊንክ (URL)")),
             const SizedBox(height: 10),
-            DropdownButton(
+            DropdownButton<String>(
               value: mType,
               dropdownColor: cardBg(context),
               items: const [DropdownMenuItem(value: 'video', child: Text("🎥 Video")), DropdownMenuItem(value: 'pdf', child: Text("📄 PDF / Note"))],
@@ -4387,7 +4385,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
     fetchStudents();
   }
 
-  Future fetchStudents() async {
+  Future<void> fetchStudents() async {
     try {
       final snap = await dbRef("students").get();
       if (snap.exists) {
@@ -4426,7 +4424,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
     }).toList();
   }
 
-  Future updateStudentStatus(String deviceId, String newStatus) async {
+  Future<void> updateStudentStatus(String deviceId, String newStatus) async {
     try {
       await dbRef("students/$deviceId").update({"status": newStatus});
       fetchStudents();
@@ -4438,7 +4436,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text("ተማሪዎች (${displayedStudents.length})"), actions: [
-        PopupMenuButton(
+        PopupMenuButton<String>(
           icon: const Icon(Icons.filter_list),
           onSelected: (val) {
             setState(() {
@@ -4446,7 +4444,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
               _applyFilter();
             });
           },
-          itemBuilder: (context) => ['All', 'v$APP_VERSION', 'VIP', 'Pending', 'Free', 'Blocked'].map((e) => PopupMenuItem(value: e, child: Text(e))).toList(),
+          itemBuilder: (context) => ['All', 'v$APP_VERSION', 'VIP', 'Pending', 'Free', 'Blocked'].map((e) => PopupMenuItem<String>(value: e, child: Text(e))).toList(),
         )
       ]),
       body: Column(
@@ -4676,7 +4674,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     fetchLeaderboard();
   }
 
-  Future fetchLeaderboard() async {
+  Future<void> fetchLeaderboard() async {
     try {
       final snap = await dbRef("leaderboard").get();
       List temp = [];
@@ -4785,7 +4783,7 @@ class _QuizScreenState extends State<QuizScreen> {
     }
   }
 
-  Future loadQuestions() async {
+  Future<void> loadQuestions() async {
     try {
       String targetType = (widget.examType == 'trainer' || widget.examType == 'quizzes') ? 'model_exams' : widget.examType;
       String targetYear = widget.year;
@@ -4830,7 +4828,7 @@ class _QuizScreenState extends State<QuizScreen> {
     }
   }
 
-  Future _bookmarkCurrentQuestion() async {
+  Future<void> _bookmarkCurrentQuestion() async {
     if (questions.isEmpty) return;
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String raw = prefs.getString('bookmarked_questions') ?? '[]';
@@ -4890,7 +4888,7 @@ class _QuizScreenState extends State<QuizScreen> {
     });
   }
 
-  Future _saveAnalyticsAndProgress() async {
+  Future<void> _saveAnalyticsAndProgress() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String raw = prefs.getString('subject_analytics') ?? '{}';
@@ -4911,7 +4909,7 @@ class _QuizScreenState extends State<QuizScreen> {
     } catch (_) {}
   }
 
-  Future _submitScoreToLeaderboard() async {
+  Future<void> _submitScoreToLeaderboard() async {
     if (score == 0) return;
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
