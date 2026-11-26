@@ -1173,7 +1173,6 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     } catch (e) {}
   }
 
-  // ✅ Scrollable Broadcast Dialog (No text clipping even for long messages)
   Future<void> _checkTargetedBroadcast() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -1426,8 +1425,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
 }
 
 // ============================================================================
-// 🏠 HOME SCREEN (QUICK ACTIONS ABOVE LEADERBOARD, HIGHLIGHTED VIP VIDEO CLASS,
-//    SHORT NOTES & PDFS, FLASHCARDS)
+// 🏠 HOME SCREEN
 // ============================================================================
 class HomeContent extends StatefulWidget {
   final bool isVIP;
@@ -1777,7 +1775,6 @@ class _HomeContentState extends State<HomeContent> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 1. 🌅 GREETING & DAILY STREAK HERO CARD
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(18),
@@ -1966,7 +1963,6 @@ class _HomeContentState extends State<HomeContent> {
 
           const SizedBox(height: 16),
 
-          // 2. 📚 MAIN FEATURE GRID (INCLUDING SHORT NOTES & PDFS + FLASHCARDS)
           GridView.count(
             crossAxisCount: 2,
             crossAxisSpacing: 12,
@@ -2043,7 +2039,6 @@ class _HomeContentState extends State<HomeContent> {
 
           const SizedBox(height: 16),
 
-          // 3. 💼 QUICK ACTIONS & TOOLS (MOVED ABOVE LEADERBOARD & HIGHLIGHTED VIP VIDEO CLASS)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
@@ -2071,7 +2066,6 @@ class _HomeContentState extends State<HomeContent> {
                 ),
                 const SizedBox(height: 12),
 
-                // 🎬 HIGHLIGHTED VIP CLASS VIDEO CARD
                 InkWell(
                   onTap: () => _openVipClass(context),
                   borderRadius: BorderRadius.circular(14),
@@ -2176,7 +2170,6 @@ class _HomeContentState extends State<HomeContent> {
 
           const SizedBox(height: 16),
 
-          // 4. 🏆 LEADERBOARD & STUDY TIPS BANNER BUTTONS
           _buildGradientBannerButton(
             title: "Quiz Leaderboard",
             subtitle: "Compete with Top 10 Remedial Students!",
@@ -2197,7 +2190,6 @@ class _HomeContentState extends State<HomeContent> {
 
           const SizedBox(height: 16),
 
-          // 5. 🎯 TODAY'S CHALLENGE CARD
           InkWell(
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const YearSelectionScreen(examType: 'model_exams', title: 'Model Exams'))).then((_) => widget.onProgressRefresh()),
             borderRadius: BorderRadius.circular(18),
@@ -2260,7 +2252,6 @@ class _HomeContentState extends State<HomeContent> {
 
           const SizedBox(height: 16),
 
-          // 6. 🏆 ACHIEVEMENTS & POINTS CARD
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
@@ -3424,7 +3415,7 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
 }
 
 // ============================================================================
-// 🛠 ADMIN DASHBOARD (LIVE STATS + SHORT NOTES/PDFS UPLOAD + FAST RECEIPTS)
+// 🛠 ADMIN DASHBOARD
 // ============================================================================
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({Key? key}) : super(key: key);
@@ -3713,7 +3704,7 @@ class AdminUploadShortPdfScreen extends StatefulWidget {
 class _AdminUploadShortPdfScreenState extends State<AdminUploadShortPdfScreen> {
   String course = "Biology";
   String chapter = "Chapter 1";
-  String kind = "short"; // 'short' or 'pdf'
+  String kind = "short";
   bool vipOnly = true;
   bool saving = false;
 
@@ -4519,7 +4510,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
   }
 }
 
-// ⚡ FAST ADMIN RECEIPTS SCREEN (QUERIES ONLY PENDING + CACHED DECODED IMAGES)
+// ⚡ FAST ADMIN RECEIPTS SCREEN
 class AdminReceiptsScreen extends StatefulWidget {
   const AdminReceiptsScreen({Key? key}) : super(key: key);
   @override
