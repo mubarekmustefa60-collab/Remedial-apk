@@ -3303,7 +3303,7 @@ class _StudyTipsScreenState extends State<StudyTipsScreen> {
     try {
       final snap = await dbRef("admin_content/study_tips").get();
       if (snap.exists) {
-        List temp = [];
+        List> temp = [];
         (snap.value as Map).forEach((k, v) => temp.add(Map.from(v)));
         temp.sort((a, b) => (b['time'] ?? 0).compareTo(a['time'] ?? 0));
         if (mounted) setState(() {
@@ -3367,7 +3367,7 @@ class _SampleMaterialsScreenState extends State<SampleMaterialsScreen> {
     try {
       final snap = await dbRef("admin_content/sample_materials").get();
       if (snap.exists) {
-        List temp = [];
+        List> temp = [];
         (snap.value as Map).forEach((k, v) => temp.add(Map.from(v)));
         temp.sort((a, b) => (b['time'] ?? 0).compareTo(a['time'] ?? 0));
         if (mounted) setState(() {
@@ -4380,7 +4380,7 @@ class _AdminStudentListScreenState extends State<AdminStudentListScreen> {
     try {
       final snap = await dbRef("students").get();
       if (snap.exists) {
-        List temp = [];
+        List> temp = [];
         (snap.value as Map).forEach((k, v) {
           Map st = Map.from(v);
           st['device_id'] = k;
@@ -4668,7 +4668,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   Future<void> fetchLeaderboard() async {
     try {
       final snap = await dbRef("leaderboard").get();
-      List temp = [];
+      List> temp = [];
       if (snap.exists) {
         (snap.value as Map).forEach((k, v) {
           temp.add(Map.from(v));
